@@ -1,0 +1,26 @@
+{
+  "name": "slack-cosense-bot",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "deploy": "wrangler deploy",
+    "typecheck": "tsc --noEmit",
+    "cf-typegen": "wrangler types",
+    "sync:prompts": "bash scripts/sync-prompts.sh"
+  },
+  "dependencies": {
+    "@chat-adapter/slack": "^4.39.0",
+    "@cloudflare/sandbox": "^0.12.9",
+    "@cloudflare/think": "^0.17.0",
+    "@openrouter/ai-sdk-provider": "^3.0.0",
+    "agents": "^0.22.0",
+    "ai": "^7.0.85",
+    "zod": "^4.5.4"
+  },
+  "devDependencies": {
+    "typescript": "^7.0.2",
+    "wrangler": "^4.127.1"
+  }
+}

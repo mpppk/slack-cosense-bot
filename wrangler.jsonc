@@ -1,0 +1,54 @@
+{
+  "$schema": "./node_modules/wrangler/config-schema.json",
+  "name": "slack-cosense-bot",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-08-28",
+
+  // Import prompts/*.md as text modules so AGENTS.md can be pasted into the
+  // system prompt verbatim (決定事項: system prompt に全文を貼る).
+  "rules": [{ "type": "Text", "globs": ["**/*.md"], "fallthrough": true }],
+
+  "observability": { "enabled": true, "logs": { "enabled": true } },
+
+  "vars": {
+    // OpenRouter model id. Confirmed against https://openrouter.ai/api/v1/models
+    "OPENROUTER_MODEL": "z-ai/glm-5.3-flash",
+
+    // The only Cosense projects this bot may touch. A channel description can
+    // name a project, but anything outside this list is rejected — the channel
+    // description is editable by any member, so it is not a trust boundary.
+    // Keep this in sync with the Service Account's project membership.
+    "COSENSE_PROJECTS": "niki-auth,niki-ai,niki-cs,niki-tech",
+
+    "COSENSE_ORIGIN": "https://scrapbox.io",
+    "SLACK_BOT_USER_NAME": "cosense-bot"
+  },
+
+  // Secrets (wrangler secret put <NAME>), never in this file:
+  //   SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, OPENROUTER_API_KEY, COSENSE_PAT
+
+  "containers": [
+    {
+      "class_name": "Sandbox",
+      "image": "./Dockerfile",
+      "instance_type": "lite",
+      // 決定事項: コンテナは全体で1本共有。
+      "max_instances": 1
+    }
+  ],
+
+  "durable_objects": {
+    "bindings": [
+      { "class_name": "Sandbox", "name": "Sandbox" },
+      { "class_name": "SlackCosenseBot", "name": "SlackCosenseBot" },
+      { "class_name": "ThinkMessengerStateAgent", "name": "ThinkMessengerStateAgent" }
+    ]
+  },
+
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["Sandbox", "SlackCosenseBot", "ThinkMessengerStateAgent"]
+    }
+  ]
+}

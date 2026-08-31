@@ -1,0 +1,14 @@
+# Copy to .dev.vars for `wrangler dev`. In production set these with
+# `wrangler secret put <NAME>` — .dev.vars is gitignored and never deployed.
+
+# Slack app credentials (Basic Information → App Credentials, OAuth & Permissions)
+SLACK_BOT_TOKEN=xoxb-...
+SLACK_SIGNING_SECRET=...
+
+# https://openrouter.ai/keys
+OPENROUTER_API_KEY=sk-or-...
+
+# Cosense token for the bot's own account. The CLI prefers COSENSE_PAT over
+# ~/.cosense/settings.json, which is the only path that works unattended
+# (`cosense login` is TTY-only). See README "Cosense の認証".
+COSENSE_PAT=...
