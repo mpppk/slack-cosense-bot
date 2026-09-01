@@ -1,16 +1,17 @@
 <!--
-  PLACEHOLDER — this file is not the real skill.
+  COSENSE_SKILL_PLACEHOLDER
 
-  The cosense Agent Skill is not vendored here by default: it is tooling that
-  lives outside this repository, and this repository is public. Run
+  The upstream cosense Agent Skill is intentionally not vendored here. Its
+  public release repository has no explicit license for skills/, so this public
+  repository cannot redistribute the skill without permission from its owner.
 
-      bun run sync:prompts
-
-  to copy it in from your local skill directory before deploying. Until then the
-  bot runs without the CLI procedure text and will be noticeably worse at
-  choosing commands.
+  Production builds must inject an approved copy through COSENSE_SKILL_PATH and
+  run `bun run sync:prompts` in the same workspace before building or deploying.
+  Never commit or publish the generated copy, and do not print the secret.
 -->
 
-# cosense Agent Skill (未取得)
+# cosense Agent Skill (not bundled)
 
-このプレースホルダのままデプロイしないこと。`bun run sync:prompts` で取り込む。
+この安全なフォールバックには upstream の手順書を含めていない。
+承認済みの Skill を `COSENSE_SKILL_PATH` から build 時に注入できない場合は、
+Cosense の手順を推測せず、利用可能なツールの説明だけに従うこと。
