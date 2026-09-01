@@ -60,6 +60,23 @@ bun run sync:prompts   # prompts/ の vendored copy を更新する
 
 ### 2. Slack アプリ
 
+Slack App Manifest の設定は [slack-app-manifest.template.json](slack-app-manifest.template.json)
+を正本とする。これは Slack の App Manifest editor に貼り付けて使える secret-free の
+テンプレートで、`<worker>` はデプロイ済み Worker のホスト名に置き換える。置き換え後の
+manifest や Slack の App Credentials はリポジトリに保存しない。
+
+1. `slack-app-manifest.template.json` をコピーし、`settings.event_subscriptions.request_url`
+   を実際の HTTPS URL (`https://<worker>.workers.dev/messengers/slack/webhook`) に置き換える。
+2. Slack の **Create New App → From an app manifest** で貼り付け、表示される scope と
+   bot events を確認して作成する。Request URL は Worker が公開された後に設定して保存し、
+   Slack の URL verification が成功したことを App settings で確認する。
+3. **OAuth & Permissions → Install to Workspace** でインストールし、表示された bot token は
+   下記の `wrangler secret put` で登録する。**Basic Information → App Credentials** の
+   signing secret も同様に登録する。値はログ、issue、commit、PR に書かない。
+
+Slack の manifest 仕様は [App manifests](https://docs.slack.dev/app-manifests/configuring-apps-with-app-manifests/)、
+Request URL の challenge は [HTTP Request URLs](https://docs.slack.dev/apis/http/) を参照する。
+
 Bot Token Scopes:
 
 | scope | 用途 |
@@ -100,7 +117,23 @@ bunx wrangler secret put OPENROUTER_API_KEY
 bunx wrangler secret put COSENSE_PAT
 ```
 
+入力値は端末の prompt に直接入力し、出力へ貼り付けない。登録後は値ではなく名前だけを
+`bunx wrangler secret list` で確認できる。
+
 ローカルは `.dev.vars.example` を `.dev.vars` にコピーして埋める。
+
+#### Issue #6 の外部セットアップ確認
+
+次の項目は Slack workspace と Cloudflare アカウントへの認証が必要で、manifest の静的
+検査では完了扱いにしない。
+
+- [ ] Slack アプリを作成し、上記 manifest の scopes と bot events を保存した
+- [ ] 実際の Worker URL で Request URL verification が成功した
+- [ ] Slack bot token を `SLACK_BOT_TOKEN` として登録した
+- [ ] Slack signing secret を `SLACK_SIGNING_SECRET` として登録した
+
+リポジトリ内の宣言的な設定は `bun run test:slack-manifest` で検査できる。これは Slack
+workspace の状態、URL verification、secret の存在や値を確認するテストではない。
 
 ### 4. チャンネルとプロジェクトの紐づけ
 
