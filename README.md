@@ -8,6 +8,8 @@ agentic loop を回し、[Sandbox SDK](https://developers.cloudflare.com/sandbox
 [Cosense編集Slack bot](https://scrapbox.io/niboshi-tasks/Cosense編集Slack_bot) にある。
 この README はその実装側の手順書である。
 
+タスクの依存関係は [docs/roadmap.md](docs/roadmap.md) にある。
+
 ## 現在の実装範囲
 
 MVP は **「Slack で mention → Cosense を読んで回答」まで**。書き込みツールは意図的に
