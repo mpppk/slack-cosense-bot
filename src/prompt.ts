@@ -4,7 +4,7 @@ import cosenseSkillMd from "../prompts/cosense-SKILL.md";
 /**
  * 決定事項: AGENTS.md と cosense Agent Skill は system prompt に全文を貼る。
  *
- * Both files are vendored under prompts/ and refreshed with `npm run
+ * Both files are vendored under prompts/ and refreshed with `bun run
  * sync:prompts`. They are imported as Text modules (see the "rules" entry in
  * wrangler.jsonc), so the bundle carries them and there is no runtime fetch.
  *

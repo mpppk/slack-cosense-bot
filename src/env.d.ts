@@ -1,5 +1,5 @@
-// Secrets are set with `wrangler secret put` and so never appear in
-// wrangler.jsonc — `wrangler types` cannot see them. Merge them into the
+// Secrets are set with `bunx wrangler secret put` and so never appear in
+// wrangler.jsonc — `bunx wrangler types` cannot see them. Merge them into the
 // generated Env interfaces here so they are typed like any other binding.
 //
 // This file must stay free of top-level import/export to remain a global script.
