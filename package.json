@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "test": "bun test",
     "typecheck": "tsc --noEmit",
     "cf-typegen": "wrangler types",
     "sync:prompts": "bash scripts/sync-prompts.sh"
