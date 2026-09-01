@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "test": "bun test",
     "typecheck": "tsc --noEmit",
     "test:slack-manifest": "bun scripts/validate-slack-app-manifest.mjs",
     "cf-typegen": "wrangler types",
