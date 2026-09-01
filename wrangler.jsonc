@@ -26,6 +26,7 @@
 
   // Secrets (bunx wrangler secret put <NAME>), never in this file:
   //   SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, OPENROUTER_API_KEY, COSENSE_PAT
+  //   COSENSE_PAT contains the Service Account access key (cs_…), not a PAT.
 
   "containers": [
     {

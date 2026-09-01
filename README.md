@@ -127,13 +127,28 @@ bun run deploy
 
 ## Cosense の認証
 
-CLI が読む環境変数は `COSENSE_PAT` **だけ**である (`cosense login --help` で確認)。
-`cosense login` は TTY 専用なので、コンテナ内で対話ログインはできない。
+`@helpfeel/cosense-cli@1.14.1` の実装では、`COSENSE_PAT` は常に Personal Access Token
+として扱われ、`x-personal-access-token` ヘッダーに送られる。Service Account のアクセスキー
+（`cs_` で始まる値）は `~/.cosense/settings.json` の `projects[].serviceAccount` に
+置いた場合だけ `x-service-account-access-key` ヘッダーに変換される。
 
-決定事項は「bot 専用の Service Account」だが、**Service Account の資格情報を
-`COSENSE_PAT` として渡せるかは未確認**である。渡せない場合は、コンテナ起動時に
-`~/.cosense/settings.json` (dir 0700 / file 0600) を書き込む処理が要る。
-最初のデプロイで確かめること。
+したがって、Worker Secret の名前は CLI 互換の `COSENSE_PAT` のままにするが、値には
+bot 専用 Service Account のアクセスキーを設定する。`runCosense()` は CLI に
+`COSENSE_PAT` を渡さず、実行前に `sandbox.writeFile()` で許可済みプロジェクトごとの
+設定を `/root/.cosense/settings.json` に書き込み、ディレクトリを 0700、ファイルを 0600
+にしてからコマンドを実行する。`cosense login` は TTY 専用なので使用しない。
+
+認証確認は、非公開プロジェクトなど認証が必要な対象に対して、書き込みを伴わない
+`readProjectMembers` で行える。対象プロジェクトの Service Account キーを保護された
+環境変数から渡し、出力にはページやキーを表示しない:
+
+```sh
+COSENSE_PAT='<Service Account access key>' \
+  bun run verify:cosense-auth -- https://scrapbox.io/<project>
+```
+
+このスクリプトは一時 HOME に同じ settings 形式を書き、`COSENSE_PAT` を子プロセスから
+除去して CLI を実行し、終了後に一時ファイルを削除する。
 
 ## 実装前に確かめること
 

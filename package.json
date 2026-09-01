@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "wrangler dev",
     "deploy": "wrangler deploy",
+    "test": "bun test",
     "typecheck": "tsc --noEmit",
+    "verify:cosense-auth": "bun scripts/verify-cosense-auth.ts",
     "cf-typegen": "wrangler types",
     "sync:prompts": "bash scripts/sync-prompts.sh"
   },

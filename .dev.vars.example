@@ -8,7 +8,7 @@ SLACK_SIGNING_SECRET=...
 # https://openrouter.ai/keys
 OPENROUTER_API_KEY=sk-or-...
 
-# Cosense token for the bot's own account. The CLI prefers COSENSE_PAT over
-# ~/.cosense/settings.json, which is the only path that works unattended
-# (`cosense login` is TTY-only). See README "Cosense の認証".
+# Service Account access key for the bot's own account (starts with cs_). The
+# Worker keeps this historical secret name, then writes the project-scoped
+# ~/.cosense/settings.json entry before invoking the CLI. See README "Cosense の認証".
 COSENSE_PAT=...

@@ -1,4 +1,10 @@
 import { getSandbox } from "@cloudflare/sandbox";
+import {
+	buildCosenseSettings,
+	COSENSE_HOME,
+	COSENSE_SETTINGS_DIR,
+	COSENSE_SETTINGS_PATH,
+} from "./cosense-auth";
 
 /**
  * 決定事項: Sandbox コンテナは全体で1本共有する。
@@ -29,6 +35,44 @@ export interface CosenseResult {
 }
 
 /**
+ * Store the Service Account key in the format expected by the CLI.
+ *
+ * `COSENSE_PAT` cannot be passed to the child process: cosense classifies that
+ * variable as a Personal Access Token and sends the wrong authentication
+ * header for a `cs_…` Service Account key.
+ */
+async function configureCosenseServiceAccount(
+	sandbox: ReturnType<typeof getSandbox>,
+	env: Env,
+): Promise<void> {
+	const settings = buildCosenseSettings(env);
+	await sandbox.mkdir(COSENSE_SETTINGS_DIR, { recursive: true });
+	const directoryPermissionResult = await sandbox.exec(
+		`chmod 700 ${COSENSE_SETTINGS_DIR}`,
+		{ timeout: 10_000 },
+	);
+	if (!directoryPermissionResult.success) {
+		throw new Error("Failed to secure Cosense Service Account settings directory");
+	}
+
+	const writeResult = await sandbox.writeFile(COSENSE_SETTINGS_PATH, settings);
+	if (!writeResult.success) {
+		throw new Error("Failed to write Cosense Service Account settings");
+	}
+
+	// The top-level SDK writeFile API has no permissions option. Apply the
+	// documented settings permissions with a command containing only constants;
+	// the credential itself never reaches a shell command or command output.
+	const filePermissionResult = await sandbox.exec(
+		`chmod 600 ${COSENSE_SETTINGS_PATH}`,
+		{ timeout: 10_000 },
+	);
+	if (!filePermissionResult.success) {
+		throw new Error("Failed to secure Cosense Service Account settings");
+	}
+}
+
+/**
  * Run the cosense CLI in the shared container.
  *
  * `args` are passed as separate values and quoted individually — never
@@ -42,12 +86,12 @@ export async function runCosense(
 	const sandbox = getSandbox(env.Sandbox, SHARED_SANDBOX_ID);
 	const command = ["cosense", ...args.map(shellQuote)].join(" ");
 
+	await configureCosenseServiceAccount(sandbox, env);
 	const result = await sandbox.exec(command, {
 		timeout: options.timeoutMs ?? 60_000,
-		// The CLI prefers COSENSE_PAT over ~/.cosense/settings.json, which is the
-		// only credential path that works unattended — `cosense login` is
-		// TTY-only. See README "Cosense の認証" for the Service Account caveat.
-		env: { COSENSE_PAT: env.COSENSE_PAT },
+		// Keep HOME aligned with the path written above. In particular, do not set
+		// COSENSE_PAT here: the CLI would classify the Service Account key as a PAT.
+		env: { HOME: COSENSE_HOME },
 	});
 
 	return {
