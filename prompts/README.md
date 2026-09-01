@@ -8,8 +8,8 @@ system prompt に全文を貼る」の実体である。
 
 | ファイル | 出所 | 更新 |
 |---|---|---|
-| `AGENTS.md` | [mpppk/niki](https://github.com/mpppk/niki) の `AGENTS.md` | `npm run sync:prompts` |
-| `cosense-SKILL.md` | ローカルの cosense Agent Skill (`SKILL.md`) | `npm run sync:prompts` |
+| `AGENTS.md` | [mpppk/niki](https://github.com/mpppk/niki) の `AGENTS.md` | `bun run sync:prompts` |
+| `cosense-SKILL.md` | ローカルの cosense Agent Skill (`SKILL.md`) | `bun run sync:prompts` |
 
 どちらも **vendored copy** なので、原本を更新したら sync を回して commit する。
 規約を書き換えたのに bot が古い規約で動く、という食い違いはここでしか起きない。

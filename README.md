@@ -52,8 +52,8 @@ Slack の1スレッド = Chat SDK の1 thread = Think の1 sub-agent。スレッ
 ### 1. 依存と prompts
 
 ```sh
-npm install
-npm run sync:prompts   # prompts/ の vendored copy を更新する
+bun install
+bun run sync:prompts   # prompts/ の vendored copy を更新する
 ```
 
 `prompts/cosense-SKILL.md` は初期状態ではプレースホルダである。**sync を回さずにデプロイしない。**
@@ -94,10 +94,10 @@ https://<worker>.workers.dev/messengers/slack/webhook
 ### 3. シークレット
 
 ```sh
-wrangler secret put SLACK_BOT_TOKEN
-wrangler secret put SLACK_SIGNING_SECRET
-wrangler secret put OPENROUTER_API_KEY
-wrangler secret put COSENSE_PAT
+bunx wrangler secret put SLACK_BOT_TOKEN
+bunx wrangler secret put SLACK_SIGNING_SECRET
+bunx wrangler secret put OPENROUTER_API_KEY
+bunx wrangler secret put COSENSE_PAT
 ```
 
 ローカルは `.dev.vars.example` を `.dev.vars` にコピーして埋める。
@@ -121,8 +121,8 @@ niki の認証認可メモ https://scrapbox.io/niki-auth
 ### 5. デプロイ
 
 ```sh
-npm run typecheck
-wrangler deploy
+bun run typecheck
+bun run deploy
 ```
 
 ## Cosense の認証

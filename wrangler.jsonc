@@ -24,7 +24,7 @@
     "SLACK_BOT_USER_NAME": "cosense-bot"
   },
 
-  // Secrets (wrangler secret put <NAME>), never in this file:
+  // Secrets (bunx wrangler secret put <NAME>), never in this file:
   //   SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, OPENROUTER_API_KEY, COSENSE_PAT
 
   "containers": [
