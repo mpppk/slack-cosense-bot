@@ -1,4 +1,10 @@
 import { getSandbox } from "@cloudflare/sandbox";
+import {
+	buildCosenseSettings,
+	COSENSE_HOME,
+	COSENSE_SETTINGS_DIR,
+	COSENSE_SETTINGS_PATH,
+} from "./cosense-auth";
 
 /**
  * 決定事項: Sandbox コンテナは全体で1本共有する。
@@ -29,6 +35,86 @@ export interface CosenseResult {
 }
 
 /**
+ * Store the Service Account key in the format expected by the CLI.
+ *
+ * `COSENSE_PAT` cannot be passed to the child process: cosense classifies that
+ * variable as a Personal Access Token and sends the wrong authentication
+ * header for a `cs_…` Service Account key.
+ */
+async function configureCosenseServiceAccount(
+	sandbox: ReturnType<typeof getSandbox>,
+	env: Env,
+): Promise<void> {
+	const settings = buildCosenseSettings(env);
+	let settingsFileMayContainSecret = false;
+
+	try {
+		const directoryResult = await sandbox.mkdir(COSENSE_SETTINGS_DIR, { recursive: true });
+		if (!directoryResult.success) {
+			throw new Error("settings directory creation failed");
+		}
+
+		const directoryPermissionResult = await sandbox.exec(
+			`chmod 700 ${COSENSE_SETTINGS_DIR}`,
+			{ timeout: 10_000 },
+		);
+		if (!directoryPermissionResult.success) {
+			throw new Error("settings directory permission setup failed");
+		}
+
+		// The top-level SDK writeFile API has no permissions option. Create the
+		// constant file path while it is empty, then secure it before any
+		// credential bytes are written. If any step below fails, remove this file
+		// so a partial write cannot leave the Service Account key behind.
+		settingsFileMayContainSecret = true;
+		const precreateResult = await sandbox.writeFile(COSENSE_SETTINGS_PATH, "");
+		if (!precreateResult.success) {
+			throw new Error("settings file creation failed");
+		}
+
+		const initialFilePermissionResult = await sandbox.exec(
+			`chmod 600 ${COSENSE_SETTINGS_PATH}`,
+			{ timeout: 10_000 },
+		);
+		if (!initialFilePermissionResult.success) {
+			throw new Error("settings file permission setup failed");
+		}
+
+		const writeResult = await sandbox.writeFile(COSENSE_SETTINGS_PATH, settings);
+		if (!writeResult.success) {
+			throw new Error("settings file write failed");
+		}
+
+		// Some file APIs replace the destination rather than writing in place.
+		// Re-apply 0600 after the secret write and treat a failed chmod as a
+		// failed authentication setup; this is the final mode verification.
+		const finalFilePermissionResult = await sandbox.exec(
+			`chmod 600 ${COSENSE_SETTINGS_PATH}`,
+			{ timeout: 10_000 },
+		);
+		if (!finalFilePermissionResult.success) {
+			throw new Error("final settings file permission verification failed");
+		}
+	} catch {
+		if (settingsFileMayContainSecret) {
+			let cleanupSucceeded = false;
+			try {
+				cleanupSucceeded = (await sandbox.deleteFile(COSENSE_SETTINGS_PATH)).success;
+			} catch {
+				// Preserve a generic failure below; neither SDK errors nor paths should
+				// be allowed to expose the settings contents.
+			}
+			if (!cleanupSucceeded) {
+				throw new Error(
+					"Failed to configure Cosense Service Account settings and clean up the settings file",
+				);
+			}
+		}
+		throw new Error("Failed to configure Cosense Service Account settings");
+	}
+}
+
+/**
  * Run the cosense CLI in the shared container.
  *
  * `args` are passed as separate values and quoted individually — never
@@ -42,12 +128,12 @@ export async function runCosense(
 	const sandbox = getSandbox(env.Sandbox, SHARED_SANDBOX_ID);
 	const command = ["cosense", ...args.map(shellQuote)].join(" ");
 
+	await configureCosenseServiceAccount(sandbox, env);
 	const result = await sandbox.exec(command, {
 		timeout: options.timeoutMs ?? 60_000,
-		// The CLI prefers COSENSE_PAT over ~/.cosense/settings.json, which is the
-		// only credential path that works unattended — `cosense login` is
-		// TTY-only. See README "Cosense の認証" for the Service Account caveat.
-		env: { COSENSE_PAT: env.COSENSE_PAT },
+		// Keep HOME aligned with the path written above. In particular, do not set
+		// COSENSE_PAT here: the CLI would classify the Service Account key as a PAT.
+		env: { HOME: COSENSE_HOME },
 	});
 
 	return {
