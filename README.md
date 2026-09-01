@@ -56,7 +56,12 @@ bun install
 bun run sync:prompts   # prompts/ の vendored copy を更新する
 ```
 
-`prompts/cosense-SKILL.md` は初期状態ではプレースホルダである。**sync を回さずにデプロイしない。**
+`prompts/cosense-SKILL.md` は、上流 Skill のライセンスが確認できないため、公開リポジトリには
+安全なフォールバックだけを置く。許諾済みの本物を使う本番 deploy では、protected CI secret を
+runner の一時ファイルへ materialize し、`COSENSE_SKILL_PATH` を指定して **同じ job 内で**
+`bun run sync:prompts` → `bun run typecheck` → `bun run deploy` を実行する。生成された
+Skill は commit・artifact・ログに残さない。具体的な注入例と境界の根拠は
+[`prompts/README.md`](prompts/README.md) を参照する。
 
 ### 2. Slack アプリ
 
