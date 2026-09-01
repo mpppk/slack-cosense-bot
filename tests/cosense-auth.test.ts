@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { buildCosenseSettings } from "../src/cosense-auth";
+import { buildCosenseSettings, validateCosenseOrigin } from "../src/cosense-auth";
 
 describe("buildCosenseSettings", () => {
   test("writes project-scoped Service Account entries", () => {
@@ -43,5 +43,22 @@ describe("buildCosenseSettings", () => {
         COSENSE_PAT: "cs_test_access_key",
       }),
     ).toThrow("COSENSE_PROJECTS");
+  });
+
+  test.each(["http://scrapbox.io", "https://evil.example", "https://scrapbox.io/other"])(
+    "rejects an unexpected origin before constructing credential settings (%s)",
+    (origin) => {
+      expect(() =>
+        buildCosenseSettings({
+          COSENSE_ORIGIN: origin,
+          COSENSE_PROJECTS: "niki-auth",
+          COSENSE_PAT: "cs_test_access_key",
+        }),
+      ).toThrow("COSENSE_ORIGIN");
+    },
+  );
+
+  test("normalizes the expected origin with one trailing slash", () => {
+    expect(validateCosenseOrigin("https://scrapbox.io/")).toBe("https://scrapbox.io");
   });
 });

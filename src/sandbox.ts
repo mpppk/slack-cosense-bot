@@ -46,29 +46,71 @@ async function configureCosenseServiceAccount(
 	env: Env,
 ): Promise<void> {
 	const settings = buildCosenseSettings(env);
-	await sandbox.mkdir(COSENSE_SETTINGS_DIR, { recursive: true });
-	const directoryPermissionResult = await sandbox.exec(
-		`chmod 700 ${COSENSE_SETTINGS_DIR}`,
-		{ timeout: 10_000 },
-	);
-	if (!directoryPermissionResult.success) {
-		throw new Error("Failed to secure Cosense Service Account settings directory");
-	}
+	let settingsFileMayContainSecret = false;
 
-	const writeResult = await sandbox.writeFile(COSENSE_SETTINGS_PATH, settings);
-	if (!writeResult.success) {
-		throw new Error("Failed to write Cosense Service Account settings");
-	}
+	try {
+		const directoryResult = await sandbox.mkdir(COSENSE_SETTINGS_DIR, { recursive: true });
+		if (!directoryResult.success) {
+			throw new Error("settings directory creation failed");
+		}
 
-	// The top-level SDK writeFile API has no permissions option. Apply the
-	// documented settings permissions with a command containing only constants;
-	// the credential itself never reaches a shell command or command output.
-	const filePermissionResult = await sandbox.exec(
-		`chmod 600 ${COSENSE_SETTINGS_PATH}`,
-		{ timeout: 10_000 },
-	);
-	if (!filePermissionResult.success) {
-		throw new Error("Failed to secure Cosense Service Account settings");
+		const directoryPermissionResult = await sandbox.exec(
+			`chmod 700 ${COSENSE_SETTINGS_DIR}`,
+			{ timeout: 10_000 },
+		);
+		if (!directoryPermissionResult.success) {
+			throw new Error("settings directory permission setup failed");
+		}
+
+		// The top-level SDK writeFile API has no permissions option. Create the
+		// constant file path while it is empty, then secure it before any
+		// credential bytes are written. If any step below fails, remove this file
+		// so a partial write cannot leave the Service Account key behind.
+		settingsFileMayContainSecret = true;
+		const precreateResult = await sandbox.writeFile(COSENSE_SETTINGS_PATH, "");
+		if (!precreateResult.success) {
+			throw new Error("settings file creation failed");
+		}
+
+		const initialFilePermissionResult = await sandbox.exec(
+			`chmod 600 ${COSENSE_SETTINGS_PATH}`,
+			{ timeout: 10_000 },
+		);
+		if (!initialFilePermissionResult.success) {
+			throw new Error("settings file permission setup failed");
+		}
+
+		const writeResult = await sandbox.writeFile(COSENSE_SETTINGS_PATH, settings);
+		if (!writeResult.success) {
+			throw new Error("settings file write failed");
+		}
+
+		// Some file APIs replace the destination rather than writing in place.
+		// Re-apply 0600 after the secret write and treat a failed chmod as a
+		// failed authentication setup; this is the final mode verification.
+		const finalFilePermissionResult = await sandbox.exec(
+			`chmod 600 ${COSENSE_SETTINGS_PATH}`,
+			{ timeout: 10_000 },
+		);
+		if (!finalFilePermissionResult.success) {
+			throw new Error("final settings file permission verification failed");
+		}
+	} catch {
+		if (settingsFileMayContainSecret) {
+			let cleanupSucceeded = false;
+			try {
+				cleanupSucceeded = (await sandbox.deleteFile(COSENSE_SETTINGS_PATH)).success;
+			} catch {
+				// Preserve a generic failure below; neither SDK errors nor paths should
+				// be allowed to expose the settings contents.
+			}
+			if (!cleanupSucceeded) {
+				throw new Error(
+					"Failed to configure Cosense Service Account settings and clean up the settings file",
+				);
+			}
+		}
+		throw new Error("Failed to configure Cosense Service Account settings");
 	}
 }
 
