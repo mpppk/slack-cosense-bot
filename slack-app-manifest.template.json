@@ -1,0 +1,44 @@
+{
+  "$schema": "https://raw.githubusercontent.com/slackapi/manifest-schema/main/manifest.schema.json",
+  "_metadata": {
+    "major_version": 2
+  },
+  "display_information": {
+    "name": "Cosense Bot",
+    "description": "Searches Cosense wiki pages and answers in Slack threads."
+  },
+  "features": {
+    "bot_user": {
+      "display_name": "cosense-bot",
+      "always_online": false
+    }
+  },
+  "oauth_config": {
+    "scopes": {
+      "bot": [
+        "app_mentions:read",
+        "chat:write",
+        "channels:history",
+        "groups:history",
+        "im:history",
+        "channels:read",
+        "groups:read",
+        "im:read"
+      ]
+    }
+  },
+  "settings": {
+    "event_subscriptions": {
+      "request_url": "https://<worker>.workers.dev/messengers/slack/webhook",
+      "bot_events": [
+        "app_mention",
+        "message.channels",
+        "message.groups",
+        "message.im"
+      ]
+    },
+    "org_deploy_enabled": false,
+    "socket_mode_enabled": false,
+    "token_rotation_enabled": false
+  }
+}
