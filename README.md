@@ -49,6 +49,9 @@ Slack の1スレッド = Chat SDK の1 thread = Think の1 sub-agent。スレッ
 
 ## セットアップ
 
+> [!IMPORTANT]
+> 本番の Cloudflare / Slack / OpenRouter / Cosense 設定と初回 deploy は、手順を一か所にまとめた [本番セットアップ runbook](docs/production-setup.md) に従う。Issue #8 は実 deploy 完了まで閉じない。
+
 ### 1. 依存と prompts
 
 ```sh
