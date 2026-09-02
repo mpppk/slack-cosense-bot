@@ -281,21 +281,15 @@ if rg -n 'COSENSE_SKILL_PLACEHOLDER' prompts/cosense-SKILL.md; then
   exit 1
 fi
 
-secret_file=
-for candidate in .dev.vars .dev.vars.* .env .env.*; do
-  case "$candidate" in
-    .dev.vars.example|.env.example|.env.sample|.env.template)
-      continue
-      ;;
-  esac
+secret_files=$(
+  find . ! -name . -prune \
+    \( -name '.dev.vars' -o -name '.dev.vars.*' -o -name '.env' -o -name '.env.*' \) \
+    ! \( -name '.dev.vars.example' -o -name '.dev.vars.sample' -o -name '.dev.vars.template' \
+      -o -name '.env.example' -o -name '.env.sample' -o -name '.env.template' \) \
+    -exec test -f {} \; -print
+)
 
-  if [ -f "$candidate" ]; then
-    secret_file=$candidate
-    break
-  fi
-done
-
-if [ -n "$secret_file" ]; then
+if [ -n "$secret_files" ]; then
   echo 'ERROR: local secret file is present in the deploy workspace' >&2
   exit 1
 fi
@@ -303,7 +297,7 @@ fi
 
 `bun run test:slack-manifest` は tracked template の構造、scopes/events、secret-like な値だけを検査し、Slack workspace の install、URL verification、secret の存在を検査しない。`wrangler deploy --dry-run` は bundle を compile するだけで live deploy しない。また `--containers-rollout=none` は container image/instance を意図的に更新しないため、これは preflight 専用である。
 
-秘密ファイルの検査は `git status` に依存しない。shell glob と `test -f` で deploy workspace のルートに実在する `.dev.vars`／環境別 `.dev.vars.*` および `.env`／`.env.*` を確認するため、`.gitignore` 対象のファイルも検出できる。tracked template の `.dev.vars.example` と一般的な `.env.example`、`.env.sample`、`.env.template` だけは対象から除外し、ファイル内容や秘密値は読まず、エラー時にも値を表示しない。
+秘密ファイルの検査は `git status` に依存しない。POSIX `find` と `test -f` で deploy workspace のルートに実在する `.dev.vars`／環境別 `.dev.vars.*` および `.env`／`.env.*` を確認するため、未一致 shell glob の挙動に左右されず、`.gitignore` 対象のファイルも検出できる。明示的な `.dev.vars.example`／`.dev.vars.sample`／`.dev.vars.template` と `.env.example`／`.env.sample`／`.env.template` だけは対象から除外し、ファイル内容や秘密値は読まず、エラー時にも候補ファイル名を表示しない。
 
 production job では `sync:prompts` 後に generated `prompts/cosense-SKILL.md` の差分が一時的に存在するため、上の preflight はそれを失敗扱いにしない。実 deploy 後に source file と generated prompt を trap/ephemeral workspace cleanup で削除し、commit や artifact を作る前に `git status --short` で generated diff が残っていないことを確認する。
 
