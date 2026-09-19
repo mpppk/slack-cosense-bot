@@ -1,11 +1,11 @@
-import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { spawn } from "node:child_process";
 import {
-	buildCosenseSettings,
 	EXPECTED_COSENSE_ORIGIN,
+	getCosensePat,
+	SUPPORTED_COSENSE_PROJECTS,
 	validateCosenseOrigin,
+	validateCosenseProject,
+	type CosenseAuthEnvironment,
 } from "./cosense-auth";
 
 const CLI_VERSION = "1.14.1";
@@ -18,29 +18,17 @@ export interface CosenseCliResult {
 }
 
 export interface VerifierDependencies {
-	mkdtemp: (prefix: string) => Promise<unknown>;
-	mkdir: (
-		path: string,
-		options?: { recursive?: boolean; mode?: number },
-	) => Promise<unknown>;
-	chmod: (path: string, mode: number) => Promise<unknown>;
-	writeFile: (
-		path: string,
-		content: string,
-		options?: { mode?: number },
-	) => Promise<unknown>;
-	rm: (
-		path: string,
-		options?: { recursive?: boolean; force?: boolean },
-	) => Promise<unknown>;
-	runCli: (projectUrl: string, home: string) => Promise<CosenseCliResult>;
+	runCli: (projectUrl: string, pat: string) => Promise<CosenseCliResult>;
 }
 
-async function runCosenseCli(projectUrl: string, home: string): Promise<CosenseCliResult> {
-	const childEnvironment: NodeJS.ProcessEnv = { ...process.env, HOME: home };
-	// Force the same settings-file route used by runCosense. If this variable
-	// survives, the CLI would intentionally bypass the Service Account entry.
-	delete childEnvironment.COSENSE_PAT;
+async function runCosenseCli(
+	projectUrl: string,
+	pat: string,
+): Promise<CosenseCliResult> {
+	const childEnvironment: NodeJS.ProcessEnv = {
+		...process.env,
+		COSENSE_PAT: pat,
+	};
 
 	return new Promise((resolve) => {
 		let settled = false;
@@ -67,11 +55,6 @@ async function runCosenseCli(projectUrl: string, home: string): Promise<CosenseC
 }
 
 const defaultDependencies: VerifierDependencies = {
-	mkdtemp,
-	mkdir,
-	chmod,
-	writeFile,
-	rm,
 	runCli: runCosenseCli,
 };
 
@@ -80,24 +63,17 @@ function reportFailure(message: string, exitCode: number): number {
 	return exitCode;
 }
 
-/**
- * Run a read-only Service Account authentication check.
- *
- * The function returns an exit code instead of terminating the process. This
- * is important after the temporary HOME exists: callers must unwind through
- * the `finally` block so the settings file containing the credential is
- * always removed.
- */
+/** Run a read-only Personal Access Token authentication check. */
 export async function verifyCosenseAuth(
 	projectUrl: string | undefined,
-	serviceAccountValue: string | undefined,
+	pat: string | undefined,
 	dependencyOverrides: Partial<VerifierDependencies> = {},
 ): Promise<number> {
 	const dependencies = { ...defaultDependencies, ...dependencyOverrides };
 
 	if (!projectUrl) {
 		return reportFailure(
-			"Usage: COSENSE_PAT=<Service Account key> bun run verify:cosense-auth -- <project URL>",
+			"Usage: set COSENSE_PAT secret, then run bun run verify:cosense-auth -- <project URL>",
 			VERIFIER_USAGE_EXIT_CODE,
 		);
 	}
@@ -109,9 +85,9 @@ export async function verifyCosenseAuth(
 		return reportFailure("The project URL is invalid", VERIFIER_USAGE_EXIT_CODE);
 	}
 
-	// Validate the destination before reading or materializing the credential.
-	// `origin` is all that belongs in settings; paths are only used to identify
-	// the project passed to the read-only CLI command.
+	// Validate the destination before starting the CLI. Paths are only used to
+	// identify the project passed to the read-only command; credentials are
+	// never written to a settings file.
 	try {
 		validateCosenseOrigin(parsedProjectUrl.origin);
 	} catch {
@@ -121,90 +97,54 @@ export async function verifyCosenseAuth(
 		);
 	}
 
-	const projectName = parsedProjectUrl.pathname.split("/").filter(Boolean)[0];
-	if (!projectName) {
+	if (
+		parsedProjectUrl.username !== "" ||
+		parsedProjectUrl.password !== "" ||
+		parsedProjectUrl.search !== "" ||
+		parsedProjectUrl.hash !== ""
+	) {
 		return reportFailure(
-			"The project URL must include a project name",
+			"The project URL must not contain credentials, a query, or a fragment",
 			VERIFIER_USAGE_EXIT_CODE,
 		);
 	}
 
-	const serviceAccount = serviceAccountValue?.trim();
-	if (!serviceAccount) {
+	const projectSegments = parsedProjectUrl.pathname.split("/").filter(Boolean);
+	if (projectSegments.length !== 1) {
 		return reportFailure(
-			"COSENSE_PAT is not configured; provide the Service Account key through a secret manager or protected environment.",
+			"The project URL must contain exactly one project name",
 			VERIFIER_USAGE_EXIT_CODE,
 		);
 	}
-	if (!serviceAccount.startsWith("cs_")) {
-		return reportFailure(
-			"COSENSE_PAT is not a Service Account access key (expected cs_…)",
-			VERIFIER_USAGE_EXIT_CODE,
-		);
-	}
+	const projectName = projectSegments[0];
 
-	let temporaryRoot: string;
+	const authEnvironment: CosenseAuthEnvironment = {
+		COSENSE_ORIGIN: parsedProjectUrl.origin,
+		COSENSE_PROJECTS: SUPPORTED_COSENSE_PROJECTS.join(","),
+		COSENSE_PAT: pat,
+	};
 	try {
-		temporaryRoot = String(
-			await dependencies.mkdtemp(join(tmpdir(), "cosense-auth-check-")),
+		validateCosenseProject(authEnvironment, projectName);
+	} catch (error) {
+		return reportFailure(
+			error instanceof Error ? error.message : "The Cosense PAT is invalid",
+			VERIFIER_USAGE_EXIT_CODE,
 		);
-	} catch {
-		return reportFailure("Could not create a temporary authentication workspace", VERIFIER_FAILURE_EXIT_CODE);
 	}
 
-	const home = join(temporaryRoot, "home");
-	const settingsDir = join(home, ".cosense");
-	const settingsPath = join(settingsDir, "settings.json");
-	let exitCode = VERIFIER_FAILURE_EXIT_CODE;
-	let cleanupFailed = false;
-
-	try {
-		await dependencies.mkdir(settingsDir, { recursive: true, mode: 0o700 });
-		await dependencies.chmod(settingsDir, 0o700);
-
-		const settings = buildCosenseSettings({
-			COSENSE_ORIGIN: parsedProjectUrl.origin,
-			COSENSE_PROJECTS: projectName,
-			COSENSE_PAT: serviceAccount,
-		});
-
-		// Create and secure the file while empty, then write the credential and
-		// verify its final mode. The temporary tree is removed in `finally` for
-		// every failure path, including CLI and permission failures.
-		await dependencies.writeFile(settingsPath, "", { mode: 0o600 });
-		await dependencies.chmod(settingsPath, 0o600);
-		await dependencies.writeFile(settingsPath, settings);
-		await dependencies.chmod(settingsPath, 0o600);
-
-		const result = await dependencies.runCli(projectUrl, home);
-		if (result.spawnError) {
-			console.error("Could not start the Cosense CLI");
-		} else if (result.code !== 0) {
-			console.error(
-				`Cosense read-only authentication check did not succeed (exit ${String(result.code)}); no authentication success was recorded.`,
-			);
-		} else {
-			console.log(
-				`Cosense Service Account read-only authentication check passed for ${EXPECTED_COSENSE_ORIGIN}/${projectName}`,
-			);
-			exitCode = 0;
-		}
-	} catch {
-		console.error("Cosense read-only authentication check could not be completed safely");
-	} finally {
-		// The temporary settings file contains the credential and must not remain
-		// on the host after the check, regardless of the result above.
-		try {
-			await dependencies.rm(temporaryRoot, { recursive: true, force: true });
-		} catch {
-			cleanupFailed = true;
-		}
+	const result = await dependencies.runCli(projectUrl, getCosensePat(authEnvironment));
+	if (result.spawnError) {
+		return reportFailure("Could not start the Cosense CLI", VERIFIER_FAILURE_EXIT_CODE);
+	}
+	if (result.code !== 0) {
+		return reportFailure(
+			`Cosense read-only authentication check did not succeed (exit ${String(result.code)}); no authentication success was recorded.`,
+			VERIFIER_FAILURE_EXIT_CODE,
+		);
 	}
 
-	if (cleanupFailed) {
-		console.error("Could not remove the temporary authentication workspace safely");
-		return VERIFIER_FAILURE_EXIT_CODE;
-	}
-
-	return exitCode;
+	console.log(
+		`Cosense PAT read-only authentication check passed for ${EXPECTED_COSENSE_ORIGIN}/${projectName}`,
+	);
+	return 0;
 }

@@ -9,7 +9,6 @@ declare namespace Cloudflare {
 		SLACK_BOT_TOKEN: string;
 		SLACK_SIGNING_SECRET: string;
 		OPENROUTER_API_KEY: string;
-		/** Service Account access key for the bot's own Cosense account (cs_…). */
 		COSENSE_PAT: string;
 	}
 }

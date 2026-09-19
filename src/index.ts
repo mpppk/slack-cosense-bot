@@ -1,4 +1,5 @@
 import { createSlackAdapter } from "@chat-adapter/slack";
+import { verifySlackRequest } from "@chat-adapter/slack/webhook";
 import { Sandbox } from "@cloudflare/sandbox";
 import { Think } from "@cloudflare/think";
 import {
@@ -64,6 +65,41 @@ export class SlackCosenseBot extends Think {
 
 export default {
 	async fetch(request: Request, env: Env): Promise<Response> {
+		// Messenger webhooks are root Think routes. Forward them to the single
+		// root agent instance because routeAgentRequest only handles /agents/*.
+		if (new URL(request.url).pathname === "/messengers/slack/webhook") {
+			// Slack's URL verification must complete before the Agent is started.
+			// Handling that handshake at the Worker edge avoids a cold-start timeout;
+			// ordinary events continue through Think for normal processing.
+			const body = await request.clone().text();
+			let payload: { type?: unknown; challenge?: unknown };
+			try {
+				payload = JSON.parse(body) as typeof payload;
+			} catch {
+				return new Response("Invalid JSON", { status: 400 });
+			}
+			if (payload.type === "url_verification") {
+				try {
+					await verifySlackRequest(request.clone(), {
+						signingSecret: env.SLACK_SIGNING_SECRET,
+					});
+				} catch {
+					return new Response("Invalid signature", { status: 401 });
+				}
+				if (typeof payload.challenge !== "string") {
+					return new Response("Invalid challenge", { status: 400 });
+				}
+				return Response.json({ challenge: payload.challenge });
+			}
+			if (typeof payload.type !== "string") {
+				return new Response("Invalid event", { status: 400 });
+			}
+			const agent = env.SlackCosenseBot.get(
+				env.SlackCosenseBot.idFromName("default"),
+			);
+			return agent.fetch(request);
+		}
+
 		return (
 			(await routeAgentRequest(request, env)) ??
 			new Response("Not found", { status: 404 })

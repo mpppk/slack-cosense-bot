@@ -125,8 +125,9 @@ bunx wrangler secret put OPENROUTER_API_KEY
 bunx wrangler secret put COSENSE_PAT
 ```
 
-入力値は端末の prompt に直接入力し、出力へ貼り付けない。登録後は値ではなく名前だけを
-`bunx wrangler secret list` で確認できる。
+入力値は端末の prompt に直接入力し、出力へ貼り付けない。Cosense PAT はユーザー単位の
+credential なので、対象4 project を閲覧できるアカウントの PAT を1つ登録する。登録後は値では
+なく名前だけを `bunx wrangler secret list` で確認できる。
 
 ローカルは `.dev.vars.example` を `.dev.vars` にコピーして埋める。
 
@@ -168,28 +169,25 @@ bun run deploy
 
 ## Cosense の認証
 
-`@helpfeel/cosense-cli@1.14.1` の実装では、`COSENSE_PAT` は常に Personal Access Token
-として扱われ、`x-personal-access-token` ヘッダーに送られる。Service Account のアクセスキー
-（`cs_` で始まる値）は `~/.cosense/settings.json` の `projects[].serviceAccount` に
-置いた場合だけ `x-service-account-access-key` ヘッダーに変換される。
-
-したがって、Worker Secret の名前は CLI 互換の `COSENSE_PAT` のままにするが、値には
-bot 専用 Service Account のアクセスキーを設定する。`runCosense()` は CLI に
-`COSENSE_PAT` を渡さず、実行前に `sandbox.writeFile()` で許可済みプロジェクトごとの
-設定を `/root/.cosense/settings.json` に書き込み、ディレクトリを 0700、ファイルを 0600
-にしてからコマンドを実行する。`cosense login` は TTY 専用なので使用しない。
+`@helpfeel/cosense-cli@1.14.1` は Personal Access Token と Service Account の両方に対応する。
+このリポジトリではBusiness plan限定のService Accountを使わず、`COSENSE_PAT` をCLIの子
+プロセス環境変数へ渡す。PATはCosenseユーザー単位で、PAT所有者が閲覧できる領域へアクセス
+できるため、実行前に `COSENSE_PROJECTS` のallowlistも検証する。PATはshell commandや
+container filesystemへ書き込まない。
 
 認証確認は、非公開プロジェクトなど認証が必要な対象に対して、書き込みを伴わない
-`readProjectMembers` で行える。対象プロジェクトの Service Account キーを保護された
-環境変数から渡し、出力にはページやキーを表示しない:
+`readProjectMembers` で行える。保護された環境変数からPATを渡し、出力にはページやPATを
+表示しない:
 
 ```sh
-COSENSE_PAT='<Service Account access key>' \
-  bun run verify:cosense-auth -- https://scrapbox.io/<project>
+read -r -s COSENSE_PAT
+export COSENSE_PAT
+bun run verify:cosense-auth -- https://scrapbox.io/niki-auth
+unset COSENSE_PAT
 ```
 
-このスクリプトは一時 HOME に同じ settings 形式を書き、`COSENSE_PAT` を子プロセスから
-除去して CLI を実行し、終了後に一時ファイルを削除する。
+同じPATで `niki-ai` / `niki-cs` / `niki-tech` も検証できる。各projectでPAT所有者が
+閲覧権限を持つことと、`COSENSE_PROJECTS` のallowlistに含まれることを確認する。
 
 ## 実装前に確かめること
 

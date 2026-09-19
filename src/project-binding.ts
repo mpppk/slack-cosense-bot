@@ -10,9 +10,10 @@ import { allowedProjects } from "./config";
  * boundary. Two things contain the blast radius:
  *
  *   1. whatever the model returns is checked against COSENSE_PROJECTS, and
- *   2. the bot's Cosense Service Account is only a member of those projects.
+ *   2. the PAT owner's Cosense account is a member of the intended projects.
  *
- * Neither alone is enough — keep both.
+ * The PAT may see more projects than this bot should use, so neither the
+ * account membership nor the allow-list alone is enough — keep both.
  */
 
 export type ProjectResolution =

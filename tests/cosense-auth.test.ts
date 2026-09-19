@@ -1,64 +1,75 @@
 import { describe, expect, test } from "bun:test";
-import { buildCosenseSettings, validateCosenseOrigin } from "../src/cosense-auth";
+import {
+	COSENSE_PAT_SECRET_NAME,
+	getCosensePat,
+	validateCosenseOrigin,
+	validateCosenseProject,
+} from "../src/cosense-auth";
 
-describe("buildCosenseSettings", () => {
-  test("writes project-scoped Service Account entries", () => {
-    const settings = JSON.parse(
-      buildCosenseSettings({
-        COSENSE_ORIGIN: "https://scrapbox.io/",
-        COSENSE_PROJECTS: " niki-auth, niki-ai, niki-auth ",
-        COSENSE_PAT: "cs_test_access_key",
-      }),
-    );
+const PAT = "pat_test_token";
 
-    expect(settings).toEqual({
-      projects: [
-        {
-          url: "https://scrapbox.io/niki-auth",
-          serviceAccount: "cs_test_access_key",
-        },
-        {
-          url: "https://scrapbox.io/niki-ai",
-          serviceAccount: "cs_test_access_key",
-        },
-      ],
-    });
-  });
+function authEnvironment(overrides: Record<string, unknown> = {}) {
+	return {
+		COSENSE_ORIGIN: "https://scrapbox.io",
+		COSENSE_PROJECTS: "niki-auth,niki-ai,niki-cs,niki-tech",
+		COSENSE_PAT: PAT,
+		...overrides,
+	};
+}
 
-  test("rejects a PAT so the wrong header cannot be selected silently", () => {
-    expect(() =>
-      buildCosenseSettings({
-        COSENSE_ORIGIN: "https://scrapbox.io",
-        COSENSE_PROJECTS: "niki-auth",
-        COSENSE_PAT: "pat_value",
-      }),
-    ).toThrow("Service Account access key");
-  });
+describe("Cosense PAT authentication", () => {
+	test("returns the configured PAT without imposing a provider-specific format", () => {
+		expect(getCosensePat({ COSENSE_PAT: PAT })).toBe(PAT);
+		expect(getCosensePat({ COSENSE_PAT: " opaque-token " })).toBe("opaque-token");
+	});
 
-  test("rejects an empty project allow-list", () => {
-    expect(() =>
-      buildCosenseSettings({
-        COSENSE_ORIGIN: "https://scrapbox.io",
-        COSENSE_PROJECTS: " , ",
-        COSENSE_PAT: "cs_test_access_key",
-      }),
-    ).toThrow("COSENSE_PROJECTS");
-  });
+	test("rejects a missing PAT without exposing its value", () => {
+		expect(() => getCosensePat({ COSENSE_PAT: "   " })).toThrow(
+			`Missing ${COSENSE_PAT_SECRET_NAME}`,
+		);
+	});
 
-  test.each(["http://scrapbox.io", "https://evil.example", "https://scrapbox.io/other"])(
-    "rejects an unexpected origin before constructing credential settings (%s)",
-    (origin) => {
-      expect(() =>
-        buildCosenseSettings({
-          COSENSE_ORIGIN: origin,
-          COSENSE_PROJECTS: "niki-auth",
-          COSENSE_PAT: "cs_test_access_key",
-        }),
-      ).toThrow("COSENSE_ORIGIN");
-    },
-  );
+	test.each(["niki-auth", "niki-ai", "niki-cs", "niki-tech"])(
+		"accepts the configured project %s",
+		(project) => {
+			expect(validateCosenseProject(authEnvironment(), project)).toBe(project);
+		},
+	);
 
-  test("normalizes the expected origin with one trailing slash", () => {
-    expect(validateCosenseOrigin("https://scrapbox.io/")).toBe("https://scrapbox.io");
-  });
+	test("rejects a project that is not in the allow-list", () => {
+		expect(() =>
+			validateCosenseProject(authEnvironment(), "other-project"),
+		).toThrow("COSENSE_PROJECTS");
+	});
+
+	test("rejects an empty project allow-list", () => {
+		expect(() =>
+			validateCosenseProject(authEnvironment({ COSENSE_PROJECTS: " , " }), "niki-auth"),
+		).toThrow("COSENSE_PROJECTS");
+	});
+
+	test("rejects a missing PAT before starting authentication", () => {
+		expect(() =>
+			validateCosenseProject(authEnvironment({ COSENSE_PAT: undefined }), "niki-auth"),
+		).toThrow("COSENSE_PAT");
+	});
+
+	test.each([
+		"http://scrapbox.io",
+		"https://evil.example",
+		"https://scrapbox.io/other",
+	])("rejects an unexpected origin before accepting the PAT (%s)", (origin) => {
+		expect(() =>
+			validateCosenseProject(
+				authEnvironment({ COSENSE_ORIGIN: origin }),
+				"niki-auth",
+			),
+		).toThrow("COSENSE_ORIGIN");
+	});
+
+	test("normalizes the expected origin with one trailing slash", () => {
+		expect(validateCosenseOrigin("https://scrapbox.io/")).toBe(
+			"https://scrapbox.io",
+		);
+	});
 });

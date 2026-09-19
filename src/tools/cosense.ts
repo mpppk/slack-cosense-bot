@@ -59,10 +59,11 @@ async function requireProject(
 /** Run a cosense subcommand, folding both failure modes into readable text. */
 async function cosenseText(
 	env: Env,
+	project: string,
 	args: string[],
 	maxChars?: number,
 ): Promise<string> {
-	const result = await runCosense(env, args);
+	const result = await runCosense(env, project, args);
 	if (!result.ok) {
 		return `cosense ${args[0]} が失敗しました (exit ${result.exitCode}): ${truncate(result.stderr, 2_000)}`;
 	}
@@ -76,7 +77,12 @@ export function createCosenseTools(ctx: ToolContext): ToolSet {
 	): Promise<string> => {
 		const resolved = await requireProject(ctx);
 		if ("error" in resolved) return resolved.error;
-		return cosenseText(ctx.env, build(projectUrl(ctx.env, resolved.project)), maxChars);
+		return cosenseText(
+			ctx.env,
+			resolved.project,
+			build(projectUrl(ctx.env, resolved.project)),
+			maxChars,
+		);
 	};
 
 	return {

@@ -1,126 +1,133 @@
 import { expect, test } from "bun:test";
-import { verifyCosenseAuth, type VerifierDependencies } from "../src/cosense-auth-verifier";
+import {
+	verifyCosenseAuth,
+	type VerifierDependencies,
+} from "../src/cosense-auth-verifier";
 
 const PROJECT_URL = "https://scrapbox.io/niki-auth";
-const SERVICE_ACCOUNT = "cs_test_access_key";
-const TEMPORARY_ROOT = "/tmp/cosense-auth-check-test";
+const PAT = "pat_test_token";
 
 function dependenciesFor(
 	overrides: Partial<VerifierDependencies> = {},
 ): VerifierDependencies {
 	return {
-		mkdtemp: async () => TEMPORARY_ROOT,
-		mkdir: async () => undefined,
-		chmod: async () => undefined,
-		writeFile: async () => undefined,
-		rm: async () => undefined,
 		runCli: async () => ({ code: 0, spawnError: false }),
 		...overrides,
 	};
 }
 
-test("rejects an unexpected verifier origin before creating a temporary workspace", async () => {
-	let temporaryWorkspaceCreated = false;
+test("rejects an unexpected verifier origin before starting the CLI", async () => {
+	let cliStarted = false;
 
 	const exitCode = await verifyCosenseAuth(
 		"http://scrapbox.io/niki-auth",
-		SERVICE_ACCOUNT,
+		PAT,
 		dependenciesFor({
-			mkdtemp: async () => {
-				temporaryWorkspaceCreated = true;
-				return TEMPORARY_ROOT;
+			runCli: async () => {
+				cliStarted = true;
+				return { code: 0, spawnError: false };
 			},
 		}),
 	);
 
 	expect(exitCode).toBe(2);
-	expect(temporaryWorkspaceCreated).toBe(false);
+	expect(cliStarted).toBe(false);
 });
 
-test("removes the temporary tree after a CLI authentication failure", async () => {
-	const calls: string[] = [];
-	const writtenContents: string[] = [];
+test("rejects a missing PAT before starting the CLI", async () => {
+	let cliStarted = false;
 
 	const exitCode = await verifyCosenseAuth(
 		PROJECT_URL,
-		SERVICE_ACCOUNT,
+		undefined,
 		dependenciesFor({
-			mkdtemp: async () => {
-				calls.push("mkdtemp");
-				return TEMPORARY_ROOT;
-			},
-			mkdir: async () => {
-				calls.push("mkdir");
-			},
-			chmod: async () => {
-				calls.push("chmod");
-			},
-			writeFile: async (_path, content) => {
-				calls.push("writeFile");
-				writtenContents.push(content);
-			},
 			runCli: async () => {
-				calls.push("runCli");
-				return { code: 1, spawnError: false };
-			},
-			rm: async () => {
-				calls.push("rm");
+				cliStarted = true;
+				return { code: 0, spawnError: false };
 			},
 		}),
 	);
 
-	expect(exitCode).toBe(1);
-	expect(calls).toEqual([
-		"mkdtemp",
-		"mkdir",
-		"chmod",
-		"writeFile",
-		"chmod",
-		"writeFile",
-		"chmod",
-		"runCli",
-		"rm",
-	]);
-	expect(writtenContents[0]).toBe("");
-	expect(writtenContents[1]).toContain(SERVICE_ACCOUNT);
+	expect(exitCode).toBe(2);
+	expect(cliStarted).toBe(false);
 });
 
-test("removes the temporary tree after a settings permission failure", async () => {
-	const calls: string[] = [];
+test("passes the PAT to the read-only CLI without writing a settings file", async () => {
+	let received: { projectUrl: string; pat: string } | undefined;
 
 	const exitCode = await verifyCosenseAuth(
 		PROJECT_URL,
-		SERVICE_ACCOUNT,
+		PAT,
 		dependenciesFor({
-			writeFile: async () => {
-				calls.push("writeFile");
-			},
-			chmod: async () => {
-				calls.push("chmod");
-				if (calls.filter((call) => call === "chmod").length === 2) {
-					throw new Error("permission denied");
-				}
-			},
-			rm: async () => {
-				calls.push("rm");
+			runCli: async (projectUrl, pat) => {
+				received = { projectUrl, pat };
+				return { code: 0, spawnError: false };
 			},
 		}),
 	);
 
-	expect(exitCode).toBe(1);
-	expect(calls).toEqual(["chmod", "writeFile", "chmod", "rm"]);
+	expect(exitCode).toBe(0);
+	expect(received).toEqual({ projectUrl: PROJECT_URL, pat: PAT });
 });
 
-test("returns failure when temporary-tree cleanup itself fails", async () => {
+test("returns failure when the read-only CLI exits unsuccessfully", async () => {
+	const exitCode = await verifyCosenseAuth(
+		PROJECT_URL,
+		PAT,
+		dependenciesFor({
+			runCli: async () => ({ code: 1, spawnError: false }),
+		}),
+	);
+
+	expect(exitCode).toBe(1);
+});
+
+test("returns failure when the CLI cannot be spawned", async () => {
+	const exitCode = await verifyCosenseAuth(
+		PROJECT_URL,
+		PAT,
+		dependenciesFor({
+			runCli: async () => ({ code: null, spawnError: true }),
+		}),
+	);
+
+	expect(exitCode).toBe(1);
+});
+
+test("rejects an unknown project without starting the CLI", async () => {
+	let cliStarted = false;
+
+	const exitCode = await verifyCosenseAuth(
+		"https://scrapbox.io/unknown-project",
+		PAT,
+		dependenciesFor({
+			runCli: async () => {
+				cliStarted = true;
+				return { code: 0, spawnError: false };
+			},
+		}),
+	);
+
+	expect(exitCode).toBe(2);
+	expect(cliStarted).toBe(false);
+});
+
+test.each(["niki-auth", "niki-ai", "niki-cs", "niki-tech"])(
+	"verifies the PAT for the configured project %s",
+	async (project) => {
+		let receivedProjectUrl = "";
 		const exitCode = await verifyCosenseAuth(
-			PROJECT_URL,
-			SERVICE_ACCOUNT,
+			`https://scrapbox.io/${project}`,
+			PAT,
 			dependenciesFor({
-				rm: async () => {
-					throw new Error("cleanup denied");
+				runCli: async (projectUrl) => {
+					receivedProjectUrl = projectUrl;
+					return { code: 0, spawnError: false };
 				},
 			}),
 		);
 
-		expect(exitCode).toBe(1);
-});
+		expect(exitCode).toBe(0);
+		expect(receivedProjectUrl).toBe(`https://scrapbox.io/${project}`);
+	},
+);
