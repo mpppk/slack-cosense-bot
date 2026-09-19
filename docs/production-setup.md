@@ -31,7 +31,7 @@
 - `package.json` が指定する Bun `1.4.0`。依存は `bun.lock` と frozen install で固定する。
 - Docker Desktop または互換 engine。`wrangler.jsonc` は `image: "./Dockerfile"` を使うので、完全な deploy では Dockerfile の build が必要である。Workers Builds を使う場合も、production の deploy command は `bun run deploy`（またはその相当の `wrangler deploy`）にする。
 - Cosense CLI の前提である Node 24+。本番コンテナも [Dockerfile](../Dockerfile) で `node:24-slim` を使い、`@cloudflare/sandbox` のバージョンを package と `0.12.9` にそろえている。
-- Cloudflare account の Worker/Container を deploy できる権限、Slack workspace で app を作成・install できる権限、OpenRouter の key を発行できる権限、対象 Cosense project の管理者による Service Account 作業。
+- Cloudflare account の Worker/Container を deploy できる権限、Slack workspace で app を作成・install できる権限、OpenRouter の key を発行できる権限、対象 Cosense project を閲覧できる Cosense アカウントと PAT を発行できる権限。
 - `jq`（secret 名だけを抽出し、API の response から成功フラグだけを残すため）。
 
 ### この Worker の 4 secrets
@@ -41,9 +41,12 @@
 | `SLACK_BOT_TOKEN` | 対象 workspace に install した bot token | Slack Web API と Chat SDK |
 | `SLACK_SIGNING_SECRET` | Slack App Credentials の signing secret | Events API request の署名検証 |
 | `OPENROUTER_API_KEY` | OpenRouter で発行した API key | `wrangler.jsonc` の `OPENROUTER_MODEL` を呼ぶ provider |
-| `COSENSE_PAT` | **Service Account access key（`cs_` で始まる値）** | 現行コードが settings file の `serviceAccount` に渡す Cosense 認証値 |
+| `COSENSE_PAT` | 対象4 projectを閲覧できるCosenseユーザーの Personal Access Token | `niki-auth` / `niki-ai` / `niki-cs` / `niki-tech` 用のCosense認証 |
 
-`wrangler.jsonc` の `vars` に秘密値を追加しない。4 secrets は Worker の runtime secret であり、値の検査や共有は行わず、名前だけを確認する。`CLOUDFLARE_API_TOKEN`、`COSENSE_PAT`、`COSENSE_SKILL_MD`、Slack token などを含む保護環境変数を debug output、PR log、artifact に残さない。
+`wrangler.jsonc` の `vars` に秘密値を追加しない。4 secrets は Worker の runtime secret であり、値の検査や共有は行わず、名前だけを確認する。`CLOUDFLARE_API_TOKEN`、Cosense PAT、`COSENSE_SKILL_MD`、Slack token などを含む保護環境変数を debug output、PR log、artifact に残さない。
+
+> [!WARNING]
+> Cosense PAT はユーザーが閲覧できる領域へアクセスできるため、PAT所有者の権限に注意する。Worker側では `COSENSE_PROJECTS` のallowlistを必ず検証し、allowlist外のproject名をCLIへ渡さない。
 
 ## 2. Cloudflare の認証
 
@@ -104,29 +107,27 @@ bunx wrangler secret put OPENROUTER_API_KEY
 
 `wrangler.jsonc` の `OPENROUTER_MODEL` は現在 `z-ai/glm-5.3-flash` である。モデル名を変える場合は、key の作成とは別のレビュー対象にする。OpenRouter の bearer 認証は Worker provider が行うので、key を curl、test fixture、manifest、`vars` へ書かない。
 
-## 4. Cosense Service Account
+## 4. Cosense Personal Access Token
 
-### 管理者が行う作業
+### Cosense側で行う作業
 
-公開されている一次資料で確認できるのは、Cosense の project settings の **Service Accounts** から登録し、Service Account Access Key を取得し、対象 project 内の読み取り API に使うこと、他 project へはアクセスできないことまでである。したがって、次を対象 Cosense の管理者作業として依頼する。
+CosenseのPersonal Access Tokenは全ユーザーが利用でき、PAT所有者が閲覧できる領域へアクセスする。Cosenseのユーザー設定画面で **Personal Access Token** タブを開き、対象4 project（現在は `niki-auth`、`niki-ai`、`niki-cs`、`niki-tech`）を閲覧できるアカウントのPATを1つ発行する。
 
-1. bot 専用の Service Account を作成する。
-2. `wrangler.jsonc` の `COSENSE_PROJECTS` に列挙された対象 project（現在は `niki-auth`、`niki-ai`、`niki-cs`、`niki-tech`）へ、その Service Account を参加させる／対象として許可する。
-3. Service Account Access Key を発行して保護された secret manager へ渡す。
+発行したPATは保護されたsecret managerへ渡し、次のWorker secretへ登録する。
 
-どの project をどの画面で招待するか、同じ account/key を複数 project に参加させられるか、project ごとに別 key が必要かは、公開資料だけでは組織固有の承認フローを確定できない。管理者に確認し、推測で member 招待、権限付与、API 呼び出しをしない。現在のコードは一つの `COSENSE_PAT` 値を許可された全 project の settings に設定するため、4 project すべてで有効であることを管理者に確認できない場合は deploy を止め、project ごとの key 設計を先に変更する。
+| secret name | 用途 |
+| --- | --- |
+| `COSENSE_PAT` | 対象4 projectを閲覧できるCosenseアカウントのPAT |
 
-### なぜ secret 名が `COSENSE_PAT` なのか
+Service AccountはBusiness plan限定なので、このリポジトリでは使用しない。PATは複数projectで共通だが、PAT所有者が閲覧できるprojectが増えるほどcredentialの権限も広がる。Workerは実行前に `COSENSE_PROJECTS` のallowlistを検証し、許可されたproject名だけをCLIへ渡す。
 
-これは本物の PAT を使うという意味ではない。`@helpfeel/cosense-cli` の CLI 互換名が `COSENSE_PAT` であり、環境変数で渡すと CLI は常に Personal Access Token として扱う。一方 `cs_` の Service Account access key は、project entry の `~/.cosense/settings.json` に `serviceAccount` として置いたときに `x-service-account-access-key` header へ変換される。
+### CLIへの渡し方
 
-このリポジトリの `src/sandbox.ts` は、Cosense CLI 実行前に共有 container の `/root/.cosense/settings.json` を一時的に作り、directory を `0700`、file を `0600` にして、`COSENSE_PAT` 自体を CLI 子プロセスへ渡さない。`cosense login` は TTY 前提なので本番手順では使わない。
+`@helpfeel/cosense-cli@1.14.1` は `COSENSE_PAT` 環境変数をPersonal Access Tokenとして扱う。このリポジトリの `src/sandbox.ts` はPATをshell commandへ埋め込まず、CLI子プロセスの環境変数としてのみ渡す。PATをcontainer filesystemへ書き込まず、`cosense login` も使用しない。
 
 ### read-only verifier
 
-まず secret を Worker へ登録する前に、対象 project ごとに `readProjectMembers` を使う read-only verifier を実行する。verifier は temporary HOME に settings を作り、CLI の stdout/stderr を転送せず、終了後に temporary tree を削除する。キーは literal としてコマンドへ書かず、protected shell または secret manager から注入する。
-
-対話 shell の例（入力は画面に表示されず、終了後に variable を消す）。
+Workerへsecretを登録する前に、`readProjectMembers` を使うread-only verifierを各projectで実行する。PATは1回入力したものを対象4 projectの確認に使い回せる。
 
 ```sh
 read -r -s COSENSE_PAT
@@ -138,7 +139,7 @@ bun run verify:cosense-auth -- https://scrapbox.io/niki-tech
 unset COSENSE_PAT
 ```
 
-期待結果は各コマンドの終了 status `0` と、project 名だけを含む pass 表示である。失敗時に CLI の raw response、key、ページ本文を貼らない。成功しない project が一つでもあれば、Service Account の参加・origin・`COSENSE_PROJECTS` を管理者と確認して止める。
+期待結果は各コマンドの終了 status `0` と、project名だけを含むpass表示である。失敗時にCLIのraw response、PAT、ページ本文を貼らない。成功しないprojectが一つでもあれば、PAT所有者のCosense参加権限、origin、`COSENSE_PROJECTS` を確認して止める。
 
 ## 5. 利用許諾済み Cosense Skill の build-time 注入
 
@@ -231,9 +232,9 @@ template の値を次の表と突き合わせる。追加 scope は要求せず�
 
 ## 7. 4 secrets の登録と名前だけの検査
 
-Section 6 の Slack token/signing secret、Section 3 の OpenRouter key、Section 4 の Cosense Service Account key がすべて保護された入力として準備できた後に実行する。
+Section 6 の Slack token/signing secret、Section 3 の OpenRouter key、Section 4 の Cosense PAT がすべて保護された入力として準備できた後に実行する。
 
-`wrangler secret put` は入力を prompt で受け、現行 Wrangler ではそのたびに Worker の version/deployment を作成する。したがって4回の途中で endpoint を利用開始せず、最後に Section 9 の full deploy を行う。値を引数、pipe、ファイルへ書かない。
+`wrangler secret put` は入力を prompt で受け、現行 Wrangler ではそのたびに Worker の version/deployment を作成する。したがって4回の途中で endpoint を利用開始せず、Section 9 の full deploy が完了するまで test traffic を流さない。値を引数、pipe、ファイルへ書かない。
 
 ```sh
 bunx wrangler secret put SLACK_BOT_TOKEN
@@ -303,7 +304,7 @@ production job では `sync:prompts` 後に generated `prompts/cosense-SKILL.md`
 
 ## 9. 本番 deploy
 
-4 secrets の登録、Slack URL verification、preflight が完了した protected environment で、Section 5 の temporary Skill source をまだ保持した同じ job から実行する。
+4 secrets の登録、Cosense PAT 実装、Slack URL verification、preflight が完了した protected environment で、Section 5 の temporary Skill source をまだ保持した同じ job から実行する。
 
 ```sh
 # COSENSE_SKILL_PATH は Section 5 で export 済み。値は表示しない。
@@ -377,7 +378,7 @@ curl -sS -G https://slack.com/api/conversations.info \
 
 ### Cosense read-only verifier
 
-Section 4 の verifier を、4 project すべてに対して再実行する。期待結果は read-only の `readProjectMembers` が exit `0` になり、ページの読み書きや編集 API を呼ばないことである。出力は pass/fail と project 名だけにし、key、member list、ページ本文、CLI raw response を出さない。
+Section 4 の verifier を、4 project すべてに対して再実行する。期待結果は read-only の `readProjectMembers` が exit `0` になり、ページの読み書きや編集 API を呼ばないことである。出力は pass/fail と project 名だけにし、PAT、member list、ページ本文、CLI raw response を出さない。
 
 ### 専用 test channel の mention / thread
 
@@ -403,10 +404,10 @@ Section 4 の verifier を、4 project すべてに対して再実行する。�
 ### `missing secret` / API key error
 
 - `bunx wrangler secret list --format=json | jq -r '.[].name' | sort` で名前だけ確認する。
-- 4 名のどれかが無ければ `bunx wrangler secret put <NAME>` を再実行する。値を shell history、file、PR に書かない。
+- 4 名のどれかが無ければ `bunx wrangler secret put <NAME>` を再実行する。Cosense PATは対象4 projectを閲覧できるアカウントのものを使う。値を shell history、file、PR に書かない。
 - Slack `invalid_auth` / `token_revoked` なら app を再 install して bot token を rotation し、signing secret が変わった場合も同様に更新する。
 - OpenRouter の認証失敗は key の有効性、期限、利用上限を OpenRouter dashboard で管理者が確認する。
-- `secret put` は即時に version/deployment を作るため、4つそろうまで test traffic を流さず、最後に Section 9 の full deploy を行う。
+- `secret put` は即時に version/deployment を作るため、4つそろい、かつPAT実装が入るまで test traffic を流さず、最後に Section 9 の full deploy を行う。
 
 ### Slack Request URL verification が失敗する
 
@@ -416,13 +417,13 @@ Section 4 の verifier を、4 project すべてに対して再実行する。�
 - Cloudflare Access、別 proxy、TLS error、Worker の `404` path mismatch がないかを見る。Slack App settings の Retry を使う前に修正を deploy する。
 - Slack が送る challenge の body を手動で issue/log に貼らない。署名検証と challenge 応答は Slack adapter/Worker に任せる。
 
-### Cosense Service Account が失敗する
+### Cosense PAT が失敗する
 
-- `COSENSE_PAT` が `cs_` で始まる Service Account access key であることを、値を表示せず secret manager の metadata で確認する。
+- `COSENSE_PAT` が登録されていることを、値を表示せず secret manager の metadata で確認する。
 - `COSENSE_ORIGIN` が `https://scrapbox.io`、対象 project が `COSENSE_PROJECTS` に一致しているか確認する。
-- 同じ key が4 projectすべてへ管理者によって参加・許可されているか確認する。公開一次資料で確認できない org 固有の招待・権限手順を推測しない。
-- Section 4 の verifier を一つの project URL ずつ実行し、`readProjectMembers` の read-only 成功だけを確認する。`cosense login` や CLI へ `COSENSE_PAT` を渡す方式へ戻さない。
-- 個別 key が必要だと判明したら、単一 `COSENSE_PAT` を前提にした現在のコードを先に変更し、別の secret 名を勝手に追加しない。
+- PAT所有者が4 projectを閲覧できることをCosense側で確認する。
+- Section 4 の verifier を各 projectで実行し、`readProjectMembers` の read-only 成功だけを確認する。PATをshell commandやcontainer filesystemへ書かない。
+- Workerが `COSENSE_PROJECTS` のallowlist外のprojectをCLIへ渡さず、PATの権限範囲を必要以上に使わないことを確認する。
 
 ### Docker / container の build・rollout が失敗する
 
@@ -490,7 +491,7 @@ bunx wrangler versions list --name slack-cosense-bot --json
 - [ ] Cloudflare の `whoami` が正しい account を示し、認証情報を出力・保存していない。
 - [ ] 承認済み Skill が build-time に mode `0600` の一時 file から注入され、production bundle に `COSENSE_SKILL_PLACEHOLDER` が無い。
 - [ ] OpenRouter key が `OPENROUTER_API_KEY` に登録され、key の値がログ/PR/artifact に無い。
-- [ ] bot 用 Cosense Service Account が `COSENSE_PROJECTS` の全 project に管理者承認で参加し、4 project の read-only verifier が成功した。
+- [ ] `COSENSE_PAT` が対象4 projectを閲覧できるCosenseアカウントのPATとして登録され、全 project のread-only verifierが成功した。
 - [ ] Slack app を manifest から作成し、template と同じ scopes/events、Socket Mode disabled、install、bot token、signing secret を確認した。
 - [ ] `https://<worker>.workers.dev/messengers/slack/webhook` の Request URL verification が成功した。
 - [ ] `secret list` で4 secret の**名前だけ**を確認した。
@@ -504,7 +505,7 @@ bunx wrangler versions list --name slack-cosense-bot --json
 
 | Issue | `Closes` にできる条件 | この PR での扱い |
 | --- | --- | --- |
-| [#3](https://github.com/mpppk/slack-cosense-bot/issues/3) | `COSENSE_PAT` に `cs_` Service Account key を登録し、許可された全 project で read-only verifier が成功し、値を漏らしていない。 | 条件を満たした実環境の作業後に判断する。 |
+| [#3](https://github.com/mpppk/slack-cosense-bot/issues/3) | `COSENSE_PAT` をCLI子プロセスの環境変数へ安全に渡す実装、全 project のread-only verifier、4 secret の名前確認が完了し、値を漏らしていない。 | まず実装を完了し、その後に全 project の実環境検証を行う。 |
 | [#6](https://github.com/mpppk/slack-cosense-bot/issues/6) | manifest の scopes/events、workspace install、bot token/signing secret、実 Worker URL の Request URL verification が完了している。 | 条件を満たした Slack workspace 作業後に判断する。 |
 | [#8](https://github.com/mpppk/slack-cosense-bot/issues/8) | #3・#6・承認済み Skill 注入がそろい、placeholder 無しの本番 bundle を実 deploy し、version/container、safe endpoint、Slack、Cosense、専用 test channel の確認まで完了している。 | **この PR は実 deploy をしないため `Refs #8`。`Closes #8` と書かない。** |
 
@@ -551,4 +552,5 @@ bunx wrangler versions list --name slack-cosense-bot --json
 
 - [Official `helpfeel/cosense-cli` repository](https://github.com/helpfeel/cosense-cli)
 - [Official Cosense Skill command list, including `readProjectMembers`](https://github.com/helpfeel/cosense-cli/blob/main/skills/cosense/SKILL.md)
+- [Cosense official Help: Personal Access Token](https://scrapbox.io/help-jp/Personal_Access_Token)
 - [Cosense official Help: Service Account](https://scrapbox.io/help-jp/Service_Account)

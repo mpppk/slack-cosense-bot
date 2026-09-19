@@ -17,7 +17,8 @@
     // The only Cosense projects this bot may touch. A channel description can
     // name a project, but anything outside this list is rejected — the channel
     // description is editable by any member, so it is not a trust boundary.
-    // Keep this in sync with the Service Account's project membership.
+    // Keep this in sync with the projects this bot is allowed to use. The PAT
+    // itself may be able to access more projects through its owner account.
     "COSENSE_PROJECTS": "niki-auth,niki-ai,niki-cs,niki-tech",
 
     "COSENSE_ORIGIN": "https://scrapbox.io",
@@ -26,7 +27,6 @@
 
   // Secrets (bunx wrangler secret put <NAME>), never in this file:
   //   SLACK_BOT_TOKEN, SLACK_SIGNING_SECRET, OPENROUTER_API_KEY, COSENSE_PAT
-  //   COSENSE_PAT contains the Service Account access key (cs_…), not a PAT.
 
   "containers": [
     {

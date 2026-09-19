@@ -12,7 +12,7 @@
 graph TD
     subgraph verify["検証"]
         I2["2 · notification ペイロード"]
-        I3["3 · COSENSE_PAT で通るか"]
+        I3["3 · Cosense PAT 認証"]
         I4["4 · conversations.info"]
         I5["5 · コールドスタート計測"]
     end
@@ -71,13 +71,13 @@ graph TD
 | issue | 直接の前提 | 理由 |
 |---|---|---|
 | [2](https://github.com/mpppk/slack-cosense-bot/issues/2) notification ペイロード | — | Slack 通知を 1 回流すだけ |
-| [3](https://github.com/mpppk/slack-cosense-bot/issues/3) COSENSE_PAT | — | 手元の CLI で確かめられる |
+| [3](https://github.com/mpppk/slack-cosense-bot/issues/3) Cosense PAT 認証 | — | PAT の安全な注入と read-only verifier を確定する |
 | [6](https://github.com/mpppk/slack-cosense-bot/issues/6) Slack アプリ | — | |
 | [7](https://github.com/mpppk/slack-cosense-bot/issues/7) SKILL.md 差し替え | — | |
 | [11](https://github.com/mpppk/slack-cosense-bot/issues/11) CI | — | どの段階でも入れられる |
 | [13](https://github.com/mpppk/slack-cosense-bot/issues/13) マーカー行の検出 | — | 純粋なテキスト解析。ユニットテストだけで完結する |
 | [4](https://github.com/mpppk/slack-cosense-bot/issues/4) conversations.info | 6 | API を叩くのに bot token が要る |
-| [8](https://github.com/mpppk/slack-cosense-bot/issues/8) 初回デプロイ | 3, 6, 7 | シークレット 4 つが揃い、prompts が実物になってから |
+| [8](https://github.com/mpppk/slack-cosense-bot/issues/8) 初回デプロイ | 3, 6, 7 | 4 secrets、Cosense PAT 認証、prompts が揃ってから |
 | [5](https://github.com/mpppk/slack-cosense-bot/issues/5) コールドスタート計測 | 8 | 本番のコンテナでないと測れない |
 | [10](https://github.com/mpppk/slack-cosense-bot/issues/10) エラーをスレッドに返す | 8 | 実際に失敗させて切り分ける |
 | [9](https://github.com/mpppk/slack-cosense-bot/issues/9) 3秒 ACK と受付投稿 | 5 | 待ち時間の実測値が設計の根拠になる |

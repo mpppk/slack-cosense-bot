@@ -1,0 +1,26 @@
+# `op inject` template for local `bun run dev` (Wrangler `.dev.vars`).
+#
+# This file contains only 1Password secret references — no secrets. It is safe to commit.
+# Generate `.dev.vars` (gitignored) with:
+#
+#   op inject -i .dev.vars.template -o .dev.vars
+#
+# `.dev.vars` layout mirrors `.dev.vars.example`. In production set these with
+# `bunx wrangler secret put <NAME>`.
+#
+# References (all verified with `op read ... > /dev/null`):
+# - Slack item "Slack App (cf-think-slack-bot production)" is referenced by
+#   item ID because parentheses are invalid in name-based secret references.
+#   Preview equivalent: same vault, item ID 3zrwxtos3xobropz7sj6oqvkhm.
+# - OpenRouter preview equivalent: same vault,
+#   "OpenRouter API Key - cf-think-slack-bot-preview" item, credential field.
+
+# Slack app credentials (Basic Information → App Credentials, OAuth & Permissions)
+SLACK_BOT_TOKEN="{{ op://cf-think-slack-bot/wcoqx7y6aiuuij5mahagacvjnq/SLACK_BOT_TOKEN }}"
+SLACK_SIGNING_SECRET="{{ op://cf-think-slack-bot/wcoqx7y6aiuuij5mahagacvjnq/SLACK_SIGNING_SECRET }}"
+
+# https://openrouter.ai/keys
+OPENROUTER_API_KEY="{{ op://cf-think-slack-bot/OpenRouter API Key - cf-think-slack-bot/credential }}"
+
+# Personal Access Token for the Cosense account used by this bot.
+COSENSE_PAT="{{ op://Personal/Cosense PAT/slack-cosense-bot }}"

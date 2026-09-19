@@ -1,9 +1,12 @@
 import { verifyCosenseAuth } from "../src/cosense-auth-verifier";
 
 try {
-	// Set the exit status only after verifyCosenseAuth has returned. In
-	// particular, never call process.exit while its temporary HOME exists.
-	process.exitCode = await verifyCosenseAuth(process.argv[2], process.env.COSENSE_PAT);
+	// Set the exit status only after verifyCosenseAuth has returned. The PAT is
+	// passed through the protected process environment and never printed.
+	process.exitCode = await verifyCosenseAuth(
+		process.argv[2],
+		process.env.COSENSE_PAT,
+	);
 } catch {
 	// Keep unexpected failures generic: neither the credential nor CLI output is
 	// safe to print from this verifier.
