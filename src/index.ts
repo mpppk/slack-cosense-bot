@@ -11,6 +11,7 @@ import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { routeAgentRequest } from "agents";
 import type { LanguageModel, ToolSet } from "ai";
 import { buildSystemPrompt } from "./prompt";
+import { resolveReceiptPost } from "./receipt";
 import { createCosenseTools } from "./tools/cosense";
 
 // Sandbox backs the cosense CLI container; ThinkMessengerStateAgent backs Chat
@@ -56,6 +57,17 @@ export class SlackCosenseBot extends Think {
 				timeout: 15_000,
 			},
 		});
+
+		// The Chat SDK fallback streamer opens every channel-mention answer with
+		// a bare "..." post, then rewrites it with edits as model chunks arrive
+		// (native streaming needs a DM/recipient context, which mentions lack).
+		// Rewrite only that placeholder into a cold-start-aware receipt (#9);
+		// stream edits and the empty/error/interrupted texts pass through
+		// untouched — errorResponseText and error classification belong to a
+		// parallel task and are not modified here.
+		const postMessage = slack.postMessage.bind(slack);
+		slack.postMessage = (threadId, message) =>
+			postMessage(threadId, resolveReceiptPost(message));
 
 		return {
 			// The key becomes the webhook path: /messengers/slack/webhook
