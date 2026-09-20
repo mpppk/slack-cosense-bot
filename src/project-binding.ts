@@ -45,6 +45,19 @@ interface SlackConversationInfo {
 }
 
 /**
+ * Strip the Chat SDK provider prefix ("slack:C123" -> "C123").
+ *
+ * Thread/channel ids from the messenger context are provider-prefixed, but
+ * the Slack Web API wants the raw channel id and answers channel_not_found
+ * otherwise. Slack channel ids never contain a colon, so the first segment
+ * is always the provider.
+ */
+export function toSlackChannelId(channelId: string): string {
+	const index = channelId.indexOf(":");
+	return index === -1 ? channelId : channelId.slice(index + 1);
+}
+
+/**
  * Read a channel's description text.
  *
  * Slack exposes two free-text fields and people use them interchangeably, so
@@ -56,7 +69,7 @@ async function fetchChannelDescription(
 	channelId: string,
 ): Promise<{ text: string; channelName: string } | { error: string }> {
 	const response = await fetch(
-		`https://slack.com/api/conversations.info?channel=${encodeURIComponent(channelId)}`,
+		`https://slack.com/api/conversations.info?channel=${encodeURIComponent(toSlackChannelId(channelId))}`,
 		{ headers: { Authorization: `Bearer ${env.SLACK_BOT_TOKEN}` } },
 	);
 
