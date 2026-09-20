@@ -1,6 +1,7 @@
 import { tool, type LanguageModel, type ToolSet } from "ai";
 import { z } from "zod";
 import { projectUrl } from "../config";
+import { sanitizeText, threadErrorMessage } from "../errors";
 import { resolveProject } from "../project-binding";
 import { runCosense, truncate } from "../sandbox";
 
@@ -56,16 +57,44 @@ async function requireProject(
 	}
 }
 
-/** Run a cosense subcommand, folding both failure modes into readable text. */
+/**
+ * Failure text for a non-zero cosense exit. Exported for unit tests.
+ *
+ * stderr is sanitized BEFORE truncation so a secret near the head of a long
+ * log cannot survive, and the exit code plus subcommand name keep the Sandbox
+ * origin distinguishable in the thread.
+ */
+export function formatCosenseFailure(
+	args: string[],
+	stderr: string,
+	exitCode: number,
+): string {
+	const subcommand = args[0] ?? "cosense";
+	return `cosense ${subcommand} が失敗しました (exit ${exitCode}): ${truncate(sanitizeText(stderr), 2_000)}`;
+}
+
+/**
+ * Run a cosense subcommand, folding both failure modes into readable text.
+ *
+ * Non-zero exits become sanitized tool text (the model relays the cause in
+ * the thread). A thrown launch failure — Sandbox startup, PAT/origin
+ * validation — never reaches the thread raw: it becomes the Sandbox 系
+ * classified定型文 so the model repeats a safe, distinguishable message.
+ */
 async function cosenseText(
 	env: Env,
 	project: string,
 	args: string[],
 	maxChars?: number,
 ): Promise<string> {
-	const result = await runCosense(env, project, args);
+	let result: Awaited<ReturnType<typeof runCosense>>;
+	try {
+		result = await runCosense(env, project, args);
+	} catch {
+		return threadErrorMessage("sandbox");
+	}
 	if (!result.ok) {
-		return `cosense ${args[0]} が失敗しました (exit ${result.exitCode}): ${truncate(result.stderr, 2_000)}`;
+		return formatCosenseFailure(args, result.stderr, result.exitCode);
 	}
 	return truncate(result.stdout, maxChars);
 }

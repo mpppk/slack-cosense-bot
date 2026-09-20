@@ -1,7 +1,7 @@
 import { createSlackAdapter } from "@chat-adapter/slack";
 import { verifySlackRequest } from "@chat-adapter/slack/webhook";
 import { Sandbox } from "@cloudflare/sandbox";
-import { Think } from "@cloudflare/think";
+import { Think, type ChatOptions, type StreamCallback, type TurnInputMessages } from "@cloudflare/think";
 import {
 	chatSdkMessenger,
 	ThinkMessengerStateAgent,
@@ -10,6 +10,13 @@ import {
 import { createOpenRouter } from "@openrouter/ai-sdk-provider";
 import { routeAgentRequest } from "agents";
 import type { LanguageModel, ToolSet } from "ai";
+import {
+	ClassifiedTurnError,
+	classifyError,
+	isClassifiedTurnError,
+	sanitizeText,
+	threadErrorMessage,
+} from "./errors";
 import { buildSystemPrompt } from "./prompt";
 import { resolveReceiptPost } from "./receipt";
 import { createCosenseTools } from "./tools/cosense";
@@ -22,6 +29,40 @@ export class SlackCosenseBot extends Think {
 	getModel(): LanguageModel {
 		const openrouter = createOpenRouter({ apiKey: this.env.OPENROUTER_API_KEY });
 		return openrouter.chat(this.env.OPENROUTER_MODEL);
+	}
+
+	/**
+	 * Classify a failed model turn and post exactly one safe message to the
+	 * originating thread (Issue #10).
+	 *
+	 * This override runs inside chatWithMessengerContext's messenger-context
+	 * window, so deliverNotice resolves the bound thread surface (not "web").
+	 * The raw error is only written to server-side logs after sanitization;
+	 * the thread gets the classified定型文 with no interpolated content.
+	 * Replaces the failure with ClassifiedTurnError so the delivery policy
+	 * below suppresses Think's generic errorResponseText (no duplicate post).
+	 */
+	override async chat(
+		userMessage: TurnInputMessages,
+		callback: StreamCallback,
+		options?: ChatOptions,
+	): Promise<void> {
+		try {
+			await super.chat(userMessage, callback, options);
+		} catch (error) {
+			if (isClassifiedTurnError(error)) throw error;
+			const kind = classifyError(error);
+			const threadMessage = threadErrorMessage(kind);
+			const detail =
+				error instanceof Error ? `${error.name}: ${error.message}` : String(error);
+			console.error(
+				`[slack-cosense-bot] turn failed kind=${kind} detail=${sanitizeText(detail)}`,
+			);
+			await this.deliverNotice({ markdown: threadMessage }).catch(
+				() => undefined,
+			);
+			throw new ClassifiedTurnError(kind, threadMessage, error);
+		}
 	}
 
 	getSystemPrompt(): string {
@@ -79,6 +120,18 @@ export class SlackCosenseBot extends Think {
 				// The Slack adapter verifies the signing secret itself, so Think
 				// must not try to verify the webhook a second time.
 				verifyWebhook: false,
+
+				// Issue #10: turn failures outside the model turn (and any path
+				// that escapes chat() before it posts a classified message) fall
+				// back to this safe generic text — never raw error content.
+				// Failures already reported via chat() throw ClassifiedTurnError,
+				// which this predicate recognizes so Think skips a duplicate
+				// generic post and the thread sees exactly one message.
+				delivery: {
+					errorResponseText: threadErrorMessage("unknown"),
+					isExpectedDeliveryCompletion: (error) =>
+						isClassifiedTurnError(error),
+				},
 
 				// "mention" alone only covers the first message. subscribed-thread is
 				// what makes "@bot ...ですか" then plain replies work, which is the
