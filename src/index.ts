@@ -41,6 +41,20 @@ export class SlackCosenseBot extends Think {
 		const slack = createSlackAdapter({
 			botToken: this.env.SLACK_BOT_TOKEN,
 			signingSecret: this.env.SLACK_SIGNING_SECRET,
+			webClientOptions: {
+				// axios の fetch adapter は cache:'default' を固定で渡すが、
+				// workerd の Request はそれを拒否する (TypeError)。失敗すると
+				// WebClient の約30分 retry が発動し webhook が無応答になるため、
+				// fetchOptions で no-store を強制し、timeout も付ける。
+				requestInterceptor: (config) => {
+					config.fetchOptions = {
+						...(config.fetchOptions ?? {}),
+						cache: "no-store",
+					};
+					return config;
+				},
+				timeout: 15_000,
+			},
 		});
 
 		return {
