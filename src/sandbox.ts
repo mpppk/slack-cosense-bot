@@ -61,6 +61,52 @@ export async function runCosense(
 	};
 }
 
+/**
+ * Run the cosense CLI with free-text input (ops JSON or a new-page body).
+ *
+ * SECURITY: `sandbox.exec()` takes a command *string*, so page text must
+ * never be interpolated into the shell command — not via `printf |`,
+ * heredoc, or `-c` tricks. The content travels to the container through the
+ * `writeFile` RPC and the CLI reads it back with `--input-file`; the shell
+ * only ever sees the temp file path (passed through `shellQuote()` like
+ * every other argv value). The temp file is removed best-effort afterwards
+ * so page drafts do not linger in the shared container.
+ */
+export async function runCosenseWithInputFile(
+	env: Env,
+	project: string,
+	buildArgs: (inputPath: string) => string[],
+	content: string,
+	options: { timeoutMs?: number } = {},
+): Promise<CosenseResult> {
+	validateCosenseProject(env, project);
+	const pat = getCosensePat(env);
+	const sandbox = getSandbox(env.Sandbox, SHARED_SANDBOX_ID);
+	const inputPath = `/tmp/cosense-input-${crypto.randomUUID()}.txt`;
+	await sandbox.writeFile(inputPath, content);
+	try {
+		const command = ["cosense", ...buildArgs(inputPath).map(shellQuote)].join(
+			" ",
+		);
+		const result = await sandbox.exec(command, {
+			timeout: options.timeoutMs ?? 60_000,
+			env: {
+				HOME: COSENSE_HOME,
+				COSENSE_PAT: pat,
+			},
+		});
+
+		return {
+			ok: result.success,
+			stdout: result.stdout,
+			stderr: result.stderr,
+			exitCode: result.exitCode,
+		};
+	} finally {
+		await sandbox.deleteFile(inputPath).catch(() => undefined);
+	}
+}
+
 /** Cap tool output so one big page cannot blow up the context window. */
 export function truncate(text: string, maxChars = 12_000): string {
 	if (text.length <= maxChars) return text;
