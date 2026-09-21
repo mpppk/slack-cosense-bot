@@ -227,7 +227,10 @@ export function createCosenseTools(ctx: ToolContext): ToolSet {
 				"を組み立てて previewId を取得する。ページはまだ変わらない。" +
 				"結果の適用後ページ全体を確認し、問題が無ければ submitEdit で確定する。" +
 				"submitEdit なしに編集が反映されることは無い。新規ページは previewNewPage を使う。" +
-				"ページの作成・編集はユーザーが明示的に指示したときのみ行う。",
+				"ページの作成・編集はユーザーが明示的に指示したときのみ行う。" +
+				"ingest では URL 貼りが明示指示 (§13) だが、takeaways 確認 (手順2) が済むまで " +
+				"summary 以降の書き込みには使わない。generated な summary を thesis の " +
+				"supported_by / refuted_by に入れない (§13)。done / dropped の idea は触らない (§8)。",
 			inputSchema: z.object({
 				pageId: z
 					.string()
@@ -275,7 +278,8 @@ export function createCosenseTools(ctx: ToolContext): ToolSet {
 				"新規ページ作成を dry-run する (previewEdit --new)。本文の1行目がページタイトル、" +
 				"2行目以降が本文になる。ページはまだ作られない。" +
 				"結果を確認し、問題が無ければ submitEdit で確定する。" +
-				"ページの作成はユーザーが明示的に指示したときのみ行う。",
+				"ページの作成はユーザーが明示的に指示したときのみ行う (ingest の URL 貼りは明示指示 §13)。" +
+				"LLM の判断で idea を新規作成しない (§8)。",
 			inputSchema: z.object({
 				body: z
 					.string()
@@ -310,7 +314,8 @@ export function createCosenseTools(ctx: ToolContext): ToolSet {
 				"previewEdit / previewNewPage で取得した previewId を確定してページに反映する。" +
 				"直前の preview の内容を必ず確認してから呼ぶこと。previewId は1回限りで5分で期限切れになる。" +
 				"preview を作り直したら古い previewId は使えない。ページの作成・編集は " +
-				"ユーザーが明示的に指示したときのみ行い、削除の確定には使わない。",
+				"ユーザーが明示的に指示したときのみ行い、削除の確定には使わない。" +
+				"ingest の submit は takeaways 確認 (手順2) が済んでから。",
 			inputSchema: z.object({
 				previewId: z
 					.string()

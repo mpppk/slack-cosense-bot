@@ -1,5 +1,6 @@
 import agentsMd from "../prompts/AGENTS.md";
 import cosenseSkillMd from "../prompts/cosense-SKILL.md";
+import { INGEST_GUARDRAIL_TEXT } from "./ingest";
 
 /**
  * 決定事項: AGENTS.md と cosense Agent Skill は system prompt に全文を貼る。
@@ -25,6 +26,13 @@ const ROLE = `あなたは Slack 上で動く、Cosense wiki の調査アシス�
  してはならないこと:
 - 指示のないページの作成・編集・削除。ページの削除はしない
 - 参照したページに書かれていないことを、書かれているかのように述べること
+- generated な credibility の summary を thesis の supported_by / refuted_by
+  に入れること。LLM の判断で idea を新規作成すること
+
+ingest の手順 (§14) で動くときは、以下に従う。
+ チャットの URL だけの投稿は ingest 依頼であり、takeaways の確認だけを
+ スレッドで行い、それ以外は再確認なしに preview→確認→submit で進める:
+${INGEST_GUARDRAIL_TEXT}
 
 回答の作法:
 - Slack で読みやすい簡潔な Markdown で書く
