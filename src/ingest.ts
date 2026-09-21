@@ -13,7 +13,8 @@
  *  2. takeaways の会話確認 → confirmRequirementForStep + INGEST_CONFIRM_POLICY_TEXT (禁止C)
  *  3. summary 作成 → buildSummaryBody / validateSummaryBody (§7)
  *  4. source へのリンク付与 → §6 の範囲であり本文検証は checkNotationCollisions 側
- *  5. concept/person/organization の作成・追記 → 型は1行目の型名のみ (TYPE_LINES)
+ *  5. concept/person/organization の作成・追記 → 型は1行目の型名のみ
+ *     (RAW_TYPE_LINE / BOOKMARK_TYPE_LINE / SUMMARY_TYPE_LINE)
  *  6. thesis 更新 → validateThesisEvidence (禁止A) + validateThesisConfidence
  *  7. synthesis 更新 → shouldConsiderNewSynthesis (2本目で検討)
  *  8. idea 更新 → canUpdateIdea / validateNewIdeaCreation (禁止B)
@@ -543,7 +544,8 @@ export function isDatePageLine(line: string): boolean {
 // 禁止C: チャット投稿の意図判定と確認範囲の設計
 // ---------------------------------------------------------------------------
 
-const URL_PATTERN = /https?:\/\/\S+/g;
+const URL_PATTERN = /https?:\/\/\S+/;
+const URL_PATTERN_GLOBAL = /https?:\/\/\S+/g;
 const SLACK_LINK_PATTERN = /<https?:\/\/[^|>]+(?:\|[^>]+)?>/g;
 
 /**
@@ -556,7 +558,7 @@ const SLACK_LINK_PATTERN = /<https?:\/\/[^|>]+(?:\|[^>]+)?>/g;
  */
 export function isBareUrlIngestRequest(messageText: string): boolean {
 	const withoutLinks = messageText.replace(SLACK_LINK_PATTERN, " ");
-	const withoutUrls = withoutLinks.replace(URL_PATTERN, " ");
+	const withoutUrls = withoutLinks.replace(URL_PATTERN_GLOBAL, " ");
 	return withoutUrls.trim() === "" && URL_PATTERN.test(messageText);
 }
 
