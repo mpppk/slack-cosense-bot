@@ -230,7 +230,8 @@ export function createCosenseTools(ctx: ToolContext): ToolSet {
 				"ページの作成・編集はユーザーが明示的に指示したときのみ行う。" +
 				"ingest では URL 貼りが明示指示 (§13) だが、takeaways 確認 (手順2) が済むまで " +
 				"summary 以降の書き込みには使わない。generated な summary を thesis の " +
-				"supported_by / refuted_by に入れない (§13)。done / dropped の idea は触らない (§8)。",
+				"supported_by / refuted_by に入れない (§13)。done / dropped の idea は触らない (§8)。" +
+				"[question] の孤立防止 (§4) で関係する [concept] から被リンクを張るときにも使う。",
 			inputSchema: z.object({
 				pageId: z
 					.string()
@@ -279,6 +280,7 @@ export function createCosenseTools(ctx: ToolContext): ToolSet {
 				"2行目以降が本文になる。ページはまだ作られない。" +
 				"結果を確認し、問題が無ければ submitEdit で確定する。" +
 				"ページの作成はユーザーが明示的に指示したときのみ行う (ingest の URL 貼りは明示指示 §13)。" +
+				"再利用価値のある回答の [question] 化 (§14 query 手順4) にも使う。" +
 				"LLM の判断で idea を新規作成しない (§8)。",
 			inputSchema: z.object({
 				body: z
@@ -315,7 +317,8 @@ export function createCosenseTools(ctx: ToolContext): ToolSet {
 				"直前の preview の内容を必ず確認してから呼ぶこと。previewId は1回限りで5分で期限切れになる。" +
 				"preview を作り直したら古い previewId は使えない。ページの作成・編集は " +
 				"ユーザーが明示的に指示したときのみ行い、削除の確定には使わない。" +
-				"ingest の submit は takeaways 確認 (手順2) が済んでから。",
+				"ingest の submit は takeaways 確認 (手順2) が済んでから。" +
+				"[question] の submit は再利用判定と適用後ページの確認が済んでから (§14 query 手順4) 。",
 			inputSchema: z.object({
 				previewId: z
 					.string()
