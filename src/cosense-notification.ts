@@ -51,8 +51,13 @@
  */
 
 import { allowedProjects, projectUrl } from "./config";
+import { buildOpsJson, type CosenseEditOp } from "./cosense-edit";
+import {
+	parsePreviewId,
+	planMarkerWriteback,
+} from "./cosense-writeback";
 import { parseMarkerLines, type MarkerInstruction } from "./marker-parser";
-import { runCosense } from "./sandbox";
+import { runCosense, runCosenseWithInputFile } from "./sandbox";
 
 /** A notifier message as delivered inside the Events API envelope. */
 export interface NotificationMessageEvent {
@@ -458,6 +463,37 @@ export interface NotificationHandlerDeps {
 		threadTs: string,
 		text: string,
 	) => Promise<void>;
+	/**
+	 * Slack permalink of the notification message (`chat.getPermalink`).
+	 * Null when the lookup fails — the writeback is skipped so the marker
+	 * stays and a later notification retries (never half-write).
+	 */
+	getPermalink: (channel: string, messageTs: string) => Promise<string | null>;
+	/**
+	 * Fresh `readPage` JSON for edit planning: the page id plus every line
+	 * with its stable id. Null when the page cannot be read.
+	 */
+	readPageForEdit: (
+		project: string,
+		title: string,
+	) => Promise<EditablePageSnapshot | null>;
+	/**
+	 * previewEdit → submitEdit with NO approval in between, one submitEdit
+	 * per call (the caller batches all markers of a page into `ops`).
+	 * The previewId is consumed immediately: it is single-use and expires
+	 * after 5 minutes.
+	 */
+	previewAndSubmitEdit: (
+		project: string,
+		pageId: string,
+		ops: CosenseEditOp[],
+	) => Promise<boolean>;
+}
+
+/** Minimal `readPage` projection the writeback planner anchors ops on. */
+export interface EditablePageSnapshot {
+	pageId: string;
+	lines: Array<{ id: string; text: string }>;
 }
 
 export interface NotificationHandleResult {
@@ -466,6 +502,87 @@ export interface NotificationHandleResult {
 	threadsCreated: number;
 	skippedDuplicates: number;
 	pagesWithoutMarkers: number;
+	writebacksSucceeded: number;
+	writebacksFailed: number;
+}
+
+/**
+ * Marker deletion + Slack-link writeback for one page, AFTER thread creation
+ * and awaited BEFORE the handler finishes (the dedup gate: answer turns in
+ * the created threads only proceed once the marker is gone).
+ *
+ * Order: permalink → fresh readPage → plan ops → single preview+submit.
+ * Only markers with successfully posted threads are passed in — a failed
+ * postThreadReply never reaches the writeback. Any step failing leaves the
+ * marker in place, so the next debounced notification retries; this function
+ * never throws.
+ */
+async function writebackPostedMarkers(
+	channel: string,
+	threadTs: string,
+	target: NotificationTarget,
+	posted: readonly MarkerInstruction[],
+	deps: NotificationHandlerDeps,
+): Promise<boolean> {
+	const key = notificationKey(channel, threadTs, target);
+	let permalink: string | null;
+	try {
+		permalink = await deps.getPermalink(channel, threadTs);
+	} catch (error) {
+		console.error(
+			`[cosense-notification] getPermalink failed key=${key} error=${error instanceof Error ? error.name : "unknown"}`,
+		);
+		return false;
+	}
+	if (!permalink) {
+		console.error(`[cosense-notification] getPermalink empty key=${key}`);
+		return false;
+	}
+	let snapshot: EditablePageSnapshot | null;
+	try {
+		snapshot = await deps.readPageForEdit(target.project, target.title);
+	} catch (error) {
+		console.error(
+			`[cosense-notification] readPage failed key=${key} error=${error instanceof Error ? error.name : "unknown"}`,
+		);
+		return false;
+	}
+	if (!snapshot) {
+		console.error(`[cosense-notification] readPage empty key=${key}`);
+		return false;
+	}
+	const plan = planMarkerWriteback(snapshot.lines, posted, permalink);
+	if (plan.ops.length === 0) {
+		// No marker line matched: a concurrent run already processed the
+		// page (the dedup mechanism working) — nothing left to write.
+		console.log(
+			`[cosense-notification] writeback skipped key=${key} matched=0 unmatched=${plan.unmatched}`,
+		);
+		return true;
+	}
+	let submitted: boolean;
+	try {
+		submitted = await deps.previewAndSubmitEdit(
+			target.project,
+			snapshot.pageId,
+			plan.ops,
+		);
+	} catch (error) {
+		console.error(
+			`[cosense-notification] writeback failed key=${key} error=${error instanceof Error ? error.name : "unknown"}`,
+		);
+		return false;
+	}
+	if (!submitted) {
+		console.error(
+			`[cosense-notification] writeback failed key=${key} ops=${plan.ops.length}`,
+		);
+		return false;
+	}
+	console.log(
+		`[cosense-notification] writeback done key=${key} ops=${plan.ops.length} matched=${plan.matched} page=${target.project}/${target.title}`,
+	);
+	return true;
 }
 
 /**
@@ -484,6 +601,8 @@ export async function handleCosenseNotification(
 		threadsCreated: 0,
 		skippedDuplicates: 0,
 		pagesWithoutMarkers: 0,
+		writebacksSucceeded: 0,
+		writebacksFailed: 0,
 	};
 	if (!isCosenseNotificationMessage(event, env)) return empty;
 
@@ -509,6 +628,8 @@ export async function handleCosenseNotification(
 		threadsCreated: 0,
 		skippedDuplicates: 0,
 		pagesWithoutMarkers: 0,
+		writebacksSucceeded: 0,
+		writebacksFailed: 0,
 	};
 
 	let existingTexts: string[] | undefined;
@@ -548,6 +669,7 @@ export async function handleCosenseNotification(
 		}
 		const pending = filterUnpostedMarkers(instructions, existingTexts);
 		result.skippedDuplicates += instructions.length - pending.length;
+		const posted: MarkerInstruction[] = [];
 		for (const instruction of pending) {
 			const text = formatMarkerThreadText(target, instruction);
 			try {
@@ -559,27 +681,42 @@ export async function handleCosenseNotification(
 				continue;
 			}
 			existingTexts.push(markerSignature(instruction));
+			posted.push(instruction);
 			result.threadsCreated += 1;
 			console.log(
 				`[cosense-notification] thread created key=${key} kind=${instruction.kind}`,
 			);
+		}
+		// Dedup gate (Issue #14): marker deletion + Slack-link writeback in
+		// ONE submitEdit, after thread creation, awaited before returning.
+		// Only successfully posted markers are written back.
+		if (posted.length > 0) {
+			const done = await writebackPostedMarkers(
+				channel,
+				threadTs,
+				target,
+				posted,
+				deps,
+			);
+			if (done) result.writebacksSucceeded += 1;
+			else result.writebacksFailed += 1;
 		}
 	}
 	return result;
 }
 
 async function slackApi(
-	method: "conversations.replies" | "chat.postMessage",
+	method: "conversations.replies" | "chat.postMessage" | "chat.getPermalink",
 	token: string,
 	params: Record<string, string>,
 	body?: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
-	const url =
-		method === "conversations.replies"
-			? `https://slack.com/api/${method}?${new URLSearchParams(params).toString()}`
-			: `https://slack.com/api/${method}`;
+	const isGet = method !== "chat.postMessage";
+	const url = isGet
+		? `https://slack.com/api/${method}?${new URLSearchParams(params).toString()}`
+		: `https://slack.com/api/${method}`;
 	const response = await fetch(url, {
-		method: method === "conversations.replies" ? "GET" : "POST",
+		method: isGet ? "GET" : "POST",
 		headers: {
 			Authorization: `Bearer ${token}`,
 			"Content-Type": "application/json; charset=utf-8",
@@ -627,6 +764,102 @@ export function liveNotificationDeps(env: Env): NotificationHandlerDeps {
 				thread_ts: threadTs,
 				text,
 			});
+		},
+		getPermalink: async (channel, messageTs) => {
+			const payload = await slackApi(
+				"chat.getPermalink",
+				env.SLACK_BOT_TOKEN,
+				{ channel, message_ts: messageTs },
+			);
+			const permalink = payload["permalink"];
+			return typeof permalink === "string" &&
+				permalink.startsWith("https://")
+				? permalink
+				: null;
+		},
+		readPageForEdit: async (project, title) => {
+			let result: Awaited<ReturnType<typeof runCosense>>;
+			try {
+				result = await runCosense(env, project, [
+					"readPage",
+					`${projectUrl(env, project)}/${encodeURIComponent(title)}`,
+				]);
+			} catch {
+				return null;
+			}
+			if (!result.ok) return null;
+			try {
+				const parsed = JSON.parse(result.stdout) as {
+					id?: unknown;
+					persistent?: unknown;
+					lines?: unknown;
+				};
+				if (parsed.persistent === false) return null;
+				if (typeof parsed.id !== "string" || !Array.isArray(parsed.lines)) {
+					return null;
+				}
+				const lines = parsed.lines.flatMap((line) => {
+					if (
+						typeof line === "object" &&
+						line !== null &&
+						typeof (line as { id?: unknown }).id === "string" &&
+						typeof (line as { text?: unknown }).text === "string"
+					) {
+						return [
+							{
+								id: (line as { id: string }).id,
+								text: (line as { text: string }).text,
+							},
+						];
+					}
+					return [];
+				});
+				return { pageId: parsed.id, lines };
+			} catch {
+				return null;
+			}
+		},
+		previewAndSubmitEdit: async (project, pageId, ops) => {
+			// previewEdit → submitEdit with NO approval in between (Issue
+			// #14): the marker itself is the gate, so the previewId is
+			// consumed immediately (single-use, 5-minute expiry).
+			let opsJson: string;
+			try {
+				opsJson = buildOpsJson(ops);
+			} catch {
+				return false;
+			}
+			let preview: Awaited<ReturnType<typeof runCosenseWithInputFile>>;
+			try {
+				preview = await runCosenseWithInputFile(
+					env,
+					project,
+					(inputPath) => [
+						"previewEdit",
+						"--input-file",
+						inputPath,
+						projectUrl(env, project),
+						pageId,
+					],
+					opsJson,
+				);
+			} catch {
+				return false;
+			}
+			if (!preview.ok) return false;
+			const previewId = parsePreviewId(preview.stdout);
+			if (!previewId) return false;
+			let submitted: Awaited<ReturnType<typeof runCosense>>;
+			try {
+				submitted = await runCosense(env, project, [
+					"submitEdit",
+					projectUrl(env, project),
+					previewId,
+				]);
+			} catch {
+				return false;
+			}
+			return submitted.ok;
 		},
 	};
 }

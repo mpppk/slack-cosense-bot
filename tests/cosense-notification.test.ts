@@ -299,6 +299,10 @@ describe("live-sample shape (coordinator-captured real notification)", () => {
 					expect(threadTs).toBe("1789910193.426639");
 					posted.push(text);
 				},
+				// Issue #14 writeback deps: no permalink → writeback skipped.
+				getPermalink: async () => null,
+				readPageForEdit: async () => null,
+				previewAndSubmitEdit: async () => false,
 			},
 		);
 		expect(result.handled).toBe(true);
@@ -341,6 +345,10 @@ describe("handleCosenseNotification (reread + one thread per marker)", () => {
 				) => {
 					posted.push({ channel, threadTs, text });
 				},
+				// Issue #14 writeback deps: no permalink → writeback skipped.
+				getPermalink: async () => null,
+				readPageForEdit: async () => null,
+				previewAndSubmitEdit: async () => false,
 			},
 		};
 	}
@@ -488,6 +496,10 @@ describe("prod-miss regression (icon-less marker, exact live attachment shape)",
           expect(threadTs).toBe("1789961895.695819");
           posted.push(text);
         },
+        // Issue #14 writeback deps: no permalink → writeback skipped.
+        getPermalink: async () => null,
+        readPageForEdit: async () => null,
+        previewAndSubmitEdit: async () => false,
       },
     );
     expect(result.handled).toBe(true);
