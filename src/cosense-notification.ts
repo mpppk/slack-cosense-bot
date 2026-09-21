@@ -11,10 +11,20 @@
  *   `chatSdkMessenger` only registers `direct-message` / `mention` /
  *   `subscribed-thread` / `action` handlers, so an unsubscribed channel
  *   bot post triggers no answer turn.
- * - The real Cosense `bot_id` is still unconfirmed, so the notifier
- *   identity is configurable via env (`COSENSE_SLACK_BOT_IDS`,
- *   comma-separated; legacy single `COSENSE_SLACK_BOT_ID` also read)
- *   and never hardcoded here.
+ * - Live sample (coordinator-captured real notification):
+ *   `subtype: "bot_message"`, `bot_id: "B0C39SDPHRP"`, username `Scrapbox`,
+ *   text `New lines on <https://scrapbox.io/niki-auth/|niki-auth>`
+ *   (project link with trailing slash), `attachments[0]` =
+ *   `{ title: ":bookmark:<page title>"` (bookmark-emoji prefix — never used
+ *   for identity), `title_link: "<page URL>#<anchor>"` (page identity; the
+ *   `#anchor` line fragment is stripped for the canonical page URL),
+ *   `text: "<https://scrapbox.io/niki-auth/query|query> test"`
+ *   (marker-line content excerpt — hint only, never trusted for detection),
+ *   `author_name: "yuki"`, `fallback` mirroring `text` }.
+ *   The notifier identity stays configurable via env (`COSENSE_SLACK_BOT_IDS`,
+ *   comma-separated; legacy single `COSENSE_SLACK_BOT_ID` also read) with
+ *   the live-sampled `B0C39SDPHRP` as the default — never hardcoded at
+ *   call sites.
  * - `users:read` is NOT granted (`missing_scope` warn in prod tail is
  *   non-fatal), so detection must not depend on user-info enrichment.
  *
@@ -23,8 +33,9 @@
  *    top-level `bot_message` (thread replies excluded so our own thread
  *    posts can never retrigger it).
  * 2. `extractNotificationTargets` — target page(s) from the notification,
- *    defensively coded for the unknown exact shape (`attachments[].title_link`
- *    first, outer-text project link + attachment title as fallback).
+ *    matched to the live-sampled shape (`attachments[].title_link` first,
+ *    still defensive: outer-text project link + attachment title as
+ *    fallback).
  * 3. Re-read via `browsePage` (never trust the excerpt) then reuse the
  *    existing marker detection (`parseMarkerLines`, Issue #13).
  * 4. Post ONE thread reply per marker instruction under the notification
@@ -33,8 +44,8 @@
  *
  * Secrets: `SLACK_BOT_TOKEN` / `COSENSE_PAT` values are never logged or
  * interpolated into posted text. Logs carry only channel/ts/bot_id/project
- * titles (bot_id is a non-secret identifier needed for the real-sample
- * capture).
+ * titles plus a truncated excerpt hint (bot_id and page URLs are non-secret
+ * identifiers).
  */
 
 import { allowedProjects, projectUrl } from "./config";
@@ -63,16 +74,27 @@ export interface NotificationTarget {
 
 const COSENSE_FALLBACK_ORIGIN = "https://scrapbox.io";
 
-/** Read the configured notifier bot ids (empty = not yet configured). */
+/**
+ * Live-sampled Cosense notifier bot id. Default when
+ * `COSENSE_SLACK_BOT_IDS` / `COSENSE_SLACK_BOT_ID` are unset — override via
+ * env if Cosense ever rotates the integration. A bot_id is a non-secret
+ * identifier, safe to keep in code and logs.
+ */
+export const DEFAULT_COSENSE_NOTIFIER_BOT_IDS = ["B0C39SDPHRP"] as const;
+
+/** Configured notifier bot ids, falling back to the live-sampled default. */
 export function getConfiguredNotifierBotIds(env: Env): string[] {
 	const record = env as unknown as Record<string, unknown>;
 	const rawList =
 		record["COSENSE_SLACK_BOT_IDS"] ?? record["COSENSE_SLACK_BOT_ID"];
-	if (typeof rawList !== "string") return [];
-	return rawList
-		.split(",")
-		.map((id) => id.trim())
-		.filter((id) => id.length > 0);
+	if (typeof rawList === "string") {
+		const parsed = rawList
+			.split(",")
+			.map((id) => id.trim())
+			.filter((id) => id.length > 0);
+		if (parsed.length > 0) return parsed;
+	}
+	return [...DEFAULT_COSENSE_NOTIFIER_BOT_IDS];
 }
 
 function asRecord(value: unknown): Record<string, unknown> | undefined {
@@ -147,10 +169,11 @@ function hasCosenseShapedAttachment(event: NotificationMessageEvent): boolean {
  *
  * - Requires a top-level channel `bot_message` (thread replies — including
  *   our own per-marker posts — are excluded so they can never retrigger).
- * - When notifier bot ids are configured, `bot_id` must be one of them.
- * - When unconfigured (real `bot_id` still unconfirmed / pending sample),
- *   any `bot_message` with a Cosense-shaped attachment payload matches, so
- *   the observed `bot_id` can be captured from logs for finalization.
+ * - `bot_id` must be a configured notifier id (default: the live-sampled
+ *   `B0C39SDPHRP`, overridable via `COSENSE_SLACK_BOT_IDS`).
+ * - The payload must additionally have the Cosense shape (project link /
+ *   scrapbox attachment), so unrelated posts from the same integration —
+ *   if it ever sends any — are ignored.
  */
 export function isCosenseNotificationMessage(
 	event: NotificationMessageEvent | unknown,
@@ -171,10 +194,7 @@ export function isCosenseNotificationMessage(
 
 	const configured = getConfiguredNotifierBotIds(env);
 	const botId = stringField(record, "bot_id");
-	if (configured.length > 0) {
-		if (!botId || !configured.includes(botId)) return false;
-		return hasCosenseShapedAttachment(record as NotificationMessageEvent);
-	}
+	if (!botId || !configured.includes(botId)) return false;
 	return hasCosenseShapedAttachment(record as NotificationMessageEvent);
 }
 
@@ -244,15 +264,28 @@ function findPageUrls(text: string, origin: string): string[] {
 }
 
 /**
- * Identify target page(s) from a notification, defensively coded for the
- * unknown exact shape.
+ * Best-effort strip of the bookmark-emoji/shortcode prefix the live
+ * notification prepends to `attachments[].title` (`:bookmark:Foo`, 🔖Foo).
+ * Fallback path only — page identity always comes from `title_link`, so a
+ * title that is legitimately emoji-first is never harmed on the primary
+ * path.
+ */
+export function stripNotificationTitlePrefix(title: string): string {
+	return title
+		.replace(/^(?::[A-Za-z0-9_+-]+:|\p{Extended_Pictographic}\uFE0F?)+/u, "")
+		.trim();
+}
+
+/**
+ * Identify target page(s) from a notification, matched to the live-sampled
+ * shape and still defensive.
  *
- * Order: `attachments[].title_link` first (observed in the public
- * Cosense→webhook payload record), then outer-text project link combined
- * with `attachments[].title`, then any scrapbox URL found in attachment
- * text fields. Projects outside `COSENSE_PROJECTS` are dropped — the
- * notification is not a trust boundary. Never throws; unparsable input
- * yields an empty list.
+ * Order: `attachments[].title_link` first (page identity; a `#anchor` line
+ * fragment is stripped for the canonical page URL), then outer-text project
+ * link combined with `attachments[].title` (bookmark prefix stripped),
+ * then any scrapbox URL found in attachment text fields. Projects outside
+ * `COSENSE_PROJECTS` are dropped — the notification is not a trust
+ * boundary. Never throws; unparsable input yields an empty list.
  */
 export function extractNotificationTargets(
 	event: NotificationMessageEvent | unknown,
@@ -272,7 +305,11 @@ export function extractNotificationTargets(
 			const key = `${project}\u0000${cleanTitle}`;
 			if (seen.has(key)) return;
 			seen.add(key);
-			targets.push({ project, title: cleanTitle, pageUrl });
+			// Strip a `#anchor` line fragment: it points at one revision's
+			// line, not the page identity (a literal `#` in a Cosense title
+			// arrives percent-encoded as %23, so this never harms titles).
+			const canonicalUrl = pageUrl.split("#")[0] || pageUrl;
+			targets.push({ project, title: cleanTitle, pageUrl: canonicalUrl });
 		};
 
 		const outerText = stringField(record, "text") ?? "";
@@ -315,7 +352,11 @@ export function extractNotificationTargets(
 			// Fallback: attachment title + outer project link.
 			const title = stringField(attachment, "title");
 			if (title && outerProject) {
-				push(outerProject, title, `${origin}/${outerProject}/${encodeURIComponent(title)}`);
+				push(
+					outerProject,
+					stripNotificationTitlePrefix(title),
+					`${origin}/${outerProject}/${encodeURIComponent(stripNotificationTitlePrefix(title))}`,
+				);
 				continue;
 			}
 			// Last resort: scrapbox URLs buried in attachment text fields.
@@ -334,8 +375,34 @@ export function extractNotificationTargets(
 	}
 }
 
-/** Stable per-marker identity used for duplicate suppression. */
-export function markerSignature(instruction: MarkerInstruction): string {
+/**
+ * Excerpt hint lines from a notification (`attachments[].text`, then
+ * `fallback` when different). The live sample carries the marker-line
+ * content here — useful as a log hint, but NEVER trusted for marker
+ * detection; threads are created only from the `browsePage` re-read.
+ */
+export function extractNotificationExcerpts(
+	event: NotificationMessageEvent | unknown,
+): string[] {
+	const record = asRecord(event);
+	if (!record) return [];
+	const excerpts: string[] = [];
+	for (const attachment of eventAttachments(
+		record as NotificationMessageEvent,
+	)) {
+		for (const key of ["text", "fallback"] as const) {
+			const value = stringField(attachment, key);
+			if (!value) continue;
+			const trimmed = value.trim();
+			if (trimmed !== "" && !excerpts.includes(trimmed)) {
+				excerpts.push(trimmed);
+			}
+		}
+	}
+	return excerpts;
+}
+
+/** Stable per-marker identity used for duplicate suppression. */export function markerSignature(instruction: MarkerInstruction): string {
 	const children = instruction.children.join("\n");
 	return `[${instruction.kind}] ${instruction.text}\n${children}`;
 }
@@ -421,6 +488,12 @@ export async function handleCosenseNotification(
 	const channel = (event.channel as string) ?? "";
 	const threadTs = (event.ts as string) ?? "";
 	const targets = extractNotificationTargets(event, env);
+	const excerpts = extractNotificationExcerpts(event);
+	if (excerpts.length > 0) {
+		console.log(
+			`[cosense-notification] excerpt hint channel=${channel} ts=${threadTs} excerpt=${excerpts[0]?.slice(0, 200)}`,
+		);
+	}
 	if (targets.length === 0) {
 		console.log(
 			`[cosense-notification] no target page extracted channel=${channel} ts=${threadTs}`,

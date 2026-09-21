@@ -1,5 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
+	DEFAULT_COSENSE_NOTIFIER_BOT_IDS,
+	extractNotificationExcerpts,
 	extractNotificationTargets,
 	filterUnpostedMarkers,
 	formatMarkerThreadText,
@@ -9,6 +11,7 @@ import {
 	isCosenseNotificationMessage,
 	markerSignature,
 	parseCosensePageUrl,
+	stripNotificationTitlePrefix,
 	type NotificationMessageEvent,
 } from "../src/cosense-notification";
 import { parseMarkerLines } from "../src/marker-parser";
@@ -25,8 +28,11 @@ const withNotifier = (botId: string) =>
 		COSENSE_SLACK_BOT_IDS: botId,
 	}) as unknown as Env;
 
-/** Shape from the public Cosense→webhook payload record (ids redacted). */
-function cosenseAttachmentEvent(botId = "B000COSENSE") {
+/** Live-sampled Cosense notifier bot id (coordinator-captured). */
+const LIVE_BOT_ID = "B0C39SDPHRP";
+
+/** Generic Cosense-shaped event; defaults to the live notifier identity. */
+function cosenseAttachmentEvent(botId = LIVE_BOT_ID) {
 	return {
 		type: "message",
 		subtype: "bot_message",
@@ -49,8 +55,9 @@ function cosenseAttachmentEvent(botId = "B000COSENSE") {
 }
 
 describe("getConfiguredNotifierBotIds", () => {
-	test("reads list and legacy single vars, never hardcoded", () => {
-		expect(getConfiguredNotifierBotIds(baseEnv)).toEqual([]);
+	test("defaults to the live-sampled bot_id, overridable via env", () => {
+		expect(DEFAULT_COSENSE_NOTIFIER_BOT_IDS).toContain(LIVE_BOT_ID);
+		expect(getConfiguredNotifierBotIds(baseEnv)).toEqual([LIVE_BOT_ID]);
 		expect(getConfiguredNotifierBotIds(withNotifier("B123"))).toEqual(["B123"]);
 		expect(
 			getConfiguredNotifierBotIds({
@@ -77,19 +84,22 @@ describe("isCosenseNotificationMessage (bot_message detector)", () => {
 		).toBe(true);
 	});
 
-	test("rejects a different bot_id when configured", () => {
+	test("matches the live notifier with no explicit config (default)", () => {
+		expect(isCosenseNotificationMessage(cosenseAttachmentEvent(), baseEnv)).toBe(
+			true,
+		);
+	});
+
+	test("rejects a different bot_id", () => {
 		expect(
 			isCosenseNotificationMessage(
 				cosenseAttachmentEvent("B999OTHER"),
 				withNotifier("B000COSENSE"),
 			),
 		).toBe(false);
-	});
-
-	test("heuristic mode matches Cosense shape so the real bot_id can be captured", () => {
-		const event = cosenseAttachmentEvent("B0REALUNKNOWN");
-		expect(isCosenseNotificationMessage(event, baseEnv)).toBe(true);
-		expect(event.bot_id).toBe("B0REALUNKNOWN");
+		expect(
+			isCosenseNotificationMessage(cosenseAttachmentEvent("B999OTHER"), baseEnv),
+		).toBe(false);
 	});
 
 	test("rejects human messages, other subtypes, and thread replies", () => {
@@ -186,6 +196,118 @@ describe("extractNotificationTargets (defensive page identification)", () => {
 		expect(extractNotificationTargets(evil, baseEnv)).toEqual([]);
 		expect(extractNotificationTargets({ nope: true }, baseEnv)).toEqual([]);
 		expect(extractNotificationTargets(null, baseEnv)).toEqual([]);
+	});
+});
+
+describe("live-sample shape (coordinator-captured real notification)", () => {
+	/** Exact live shape: bookmark-prefixed title, anchored title_link. */
+	function liveNotificationEvent() {
+		return {
+			type: "message",
+			subtype: "bot_message",
+			bot_id: LIVE_BOT_ID,
+			username: "Scrapbox",
+			text: "New lines on <https://scrapbox.io/niki-auth/|niki-auth>",
+			channel: "C8P1104Q4",
+			ts: "1789910193.426639",
+			attachments: [
+				{
+					title: ":bookmark:Test query page",
+					title_link:
+						"https://scrapbox.io/niki-auth/Test%20query%20page#68d1234abc",
+					text: "<https://scrapbox.io/niki-auth/query|query> test",
+					fallback: "<https://scrapbox.io/niki-auth/query|query> test",
+					author_name: "yuki",
+				},
+			],
+		} as unknown as NotificationMessageEvent;
+	}
+
+	test("detector matches the live event with default config", () => {
+		expect(isCosenseNotificationMessage(liveNotificationEvent(), baseEnv)).toBe(
+			true,
+		);
+		expect(
+			isCosenseNotificationEnvelope(
+				{ type: "event_callback", event: liveNotificationEvent() },
+				baseEnv,
+			),
+		).toBe(true);
+	});
+
+	test("extracts the page URL from title_link (anchor stripped)", () => {
+		expect(extractNotificationTargets(liveNotificationEvent(), baseEnv)).toEqual([
+			{
+				project: "niki-auth",
+				title: "Test query page",
+				pageUrl: "https://scrapbox.io/niki-auth/Test%20query%20page",
+			},
+		]);
+	});
+
+	test("extracts the marker line from the attachments text", () => {
+		expect(extractNotificationExcerpts(liveNotificationEvent())).toEqual([
+			"<https://scrapbox.io/niki-auth/query|query> test",
+		]);
+	});
+
+	test("extracts the project from the text link (no title_link variant)", () => {
+		const event = liveNotificationEvent();
+		const attachments = (
+			event.attachments as Array<Record<string, unknown>>
+		).map((attachment) => {
+			const copy = { ...attachment };
+			delete copy["title_link"];
+			return copy;
+		});
+		const withoutLink = { ...event, attachments };
+		expect(
+			extractNotificationTargets(withoutLink, baseEnv),
+		).toEqual([
+			{
+				project: "niki-auth",
+				title: "Test query page",
+				pageUrl: "https://scrapbox.io/niki-auth/Test%20query%20page",
+			},
+		]);
+	});
+
+	test("strips the bookmark prefix on the fallback path only", () => {
+		expect(stripNotificationTitlePrefix(":bookmark:Test query page")).toBe(
+			"Test query page",
+		);
+		expect(stripNotificationTitlePrefix("🔖Test query page")).toBe(
+			"Test query page",
+		);
+		expect(stripNotificationTitlePrefix("Plain title")).toBe("Plain title");
+	});
+
+	test("handler creates a thread from the live event via reread", async () => {
+		const posted: string[] = [];
+		const result = await handleCosenseNotification(
+			liveNotificationEvent(),
+			baseEnv,
+			{
+				browsePageText: async (project, title) => {
+					expect(project).toBe("niki-auth");
+					expect(title).toBe("Test query page");
+					return "本文\n[query] test [yuki.icon]";
+				},
+				listThreadReplyTexts: async () => [],
+				postThreadReply: async (channel, threadTs, text) => {
+					expect(channel).toBe("C8P1104Q4");
+					expect(threadTs).toBe("1789910193.426639");
+					posted.push(text);
+				},
+			},
+		);
+		expect(result.handled).toBe(true);
+		expect(result.threadsCreated).toBe(1);
+		expect(posted).toHaveLength(1);
+		expect(posted[0]).toContain("[query] test");
+		expect(posted[0]).toContain(
+			"https://scrapbox.io/niki-auth/Test%20query%20page",
+		);
 	});
 });
 
