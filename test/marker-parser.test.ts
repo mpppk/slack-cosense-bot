@@ -115,14 +115,31 @@ describe("parseMarkerLines", () => {
 		).toEqual([]);
 	});
 
-	test("rejects markers whose icon is not exactly at line end", () => {
+	test("strips only a final icon and keeps a non-final icon-like token as text", () => {
+		// Contract change (Issue #12 prod-miss): the trailing user icon is
+		// optional, so an icon-like token is just text unless it ends the
+		// line — and any user's icon is accepted, not only [yuki.icon].
 		expect(
 			parseMarkerLines(
 				"[query] アイコンの後に文字 [yuki.icon] まだ続く\n" +
 					"[ingest] 別のアイコン [other.icon]\n" +
 					"[lint] アイコンだけ次の行\n[yuki.icon]",
 			),
-		).toEqual([]);
+		).toEqual([
+			{
+				kind: "query",
+				text: "アイコンの後に文字 [yuki.icon] まだ続く",
+				children: [],
+			},
+			{ kind: "ingest", text: "別のアイコン", children: [] },
+			{ kind: "lint", text: "アイコンだけ次の行", children: [] },
+		]);
+	});
+
+	test("parses icon-less markers (icon optional since the Issue #12 prod-miss)", () => {
+		expect(parseMarkerLines("[query] prod-verify")).toEqual([
+			{ kind: "query", text: "prod-verify", children: [] },
+		]);
 	});
 
 	test("keeps unmarked questions, monologues, and URLs inert", () => {
@@ -131,8 +148,7 @@ describe("parseMarkerLines", () => {
 				"MCP の認可はどうなっていますか？ [yuki.icon]\n" +
 					"ふと思ったことをメモしておく [yuki.icon]\n" +
 					"https://example.com/query?q=lint [yuki.icon]\n" +
-					"https://example.com/[query]/page\n" +
-					"[query] 署名が無い",
+					"https://example.com/[query]/page",
 			),
 		).toEqual([]);
 	});

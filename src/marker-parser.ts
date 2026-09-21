@@ -24,16 +24,18 @@ export type RoutedMarkerInstructions = {
 	[operation in MarkerOperation]: MarkerInstruction[];
 };
 
-const USER_ICON = "[yuki.icon]";
+const TRAILING_USER_ICON = /\s*\[[^\[\]\s]+\.icon\]$/;
 const MARKER_AT_LINE_START = /^\[(query|ingest|lint)\]/;
 
 /**
  * Parse marker instructions from a Cosense page body.
  *
- * Detection is deliberately strict: an operation marker must be at column
- * zero and the user icon must be the final token on the same line. This keeps
- * ordinary questions, comments, and URLs inert. Parsing has no I/O and does
- * not mutate the input.
+ * Detection is deliberately scoped: an operation marker must be at column
+ * zero. A trailing user icon (`[someone.icon]`) is accepted but NOT required —
+ * prod evidence (Issue #12 follow-up) showed icon-less `[query] prod-verify`
+ * lines being silently dropped, so the icon is stripped when present and the
+ * remainder is the instruction text. This keeps ordinary questions, comments,
+ * and URLs inert. Parsing has no I/O and does not mutate the input.
  */
 export function parseMarkerLines(pageBody: string): MarkerInstruction[] {
 	const lines = pageBody.split(/\r\n?|\n/);
@@ -90,13 +92,13 @@ function parseMarkerLine(
 	line: string,
 ): Omit<MarkerInstruction, "children"> | undefined {
 	const marker = MARKER_AT_LINE_START.exec(line);
-	if (!marker || !line.endsWith(USER_ICON)) return undefined;
+	if (!marker) return undefined;
 
 	const markerEnd = marker[0].length;
-	const iconStart = line.length - USER_ICON.length;
+	const withoutIcon = line.replace(TRAILING_USER_ICON, "");
 	return {
 		kind: marker[1] as MarkerKind,
-		text: line.slice(markerEnd, iconStart).trim(),
+		text: withoutIcon.slice(markerEnd).trim(),
 	};
 }
 

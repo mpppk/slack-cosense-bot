@@ -37,7 +37,9 @@
  *    still defensive: outer-text project link + attachment title as
  *    fallback).
  * 3. Re-read via `browsePage` (never trust the excerpt) then reuse the
- *    existing marker detection (`parseMarkerLines`, Issue #13).
+ *    existing marker detection (`parseMarkerLines`, Issue #13 — trailing
+ *    user icon optional since the Issue #12 prod-miss fix; a page with no
+ *    markers is logged at info level so the miss is never silent).
  * 4. Post ONE thread reply per marker instruction under the notification
  *    message; debounce repeats are suppressed by checking existing thread
  *    replies before posting (no persistent store, no take-missing fallback).
@@ -527,6 +529,12 @@ export async function handleCosenseNotification(
 		}
 		const instructions = parseMarkerLines(pageBody);
 		if (instructions.length === 0) {
+			// Info-level (not silent): a notification that yields no markers
+			// is the primary miss signal — prod showed an icon-less marker
+			// line dropping here with zero log output before this line.
+			console.log(
+				`[cosense-notification] no markers key=${key} page=${target.project}/${target.title}`,
+			);
 			result.pagesWithoutMarkers += 1;
 			continue;
 		}
