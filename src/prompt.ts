@@ -1,6 +1,7 @@
 import agentsMd from "../prompts/AGENTS.md";
 import cosenseSkillMd from "../prompts/cosense-SKILL.md";
 import { INGEST_GUARDRAIL_TEXT } from "./ingest";
+import { OPERATION_LOG_GUARDRAIL_TEXT } from "./operation-log";
 import { QUESTION_GUARDRAIL_TEXT } from "./question";
 
 /**
@@ -39,6 +40,10 @@ ${INGEST_GUARDRAIL_TEXT}
   回答のあと再利用価値を判定し、あれば [question] として wiki に戻し、
   判定理由をスレッドに一言残す:
 ${QUESTION_GUARDRAIL_TEXT}
+
+ 操作が完了したとき (§12) は、以下に従う。
+  その日の日付ページに EXACTLY ONE 行だけ追記し、動詞は増やさない:
+${OPERATION_LOG_GUARDRAIL_TEXT}
 
 回答の作法:
 - Slack で読みやすい簡潔な Markdown で書く
