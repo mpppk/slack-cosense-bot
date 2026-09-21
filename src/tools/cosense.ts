@@ -1,16 +1,25 @@
 import { tool, type LanguageModel, type ToolSet } from "ai";
 import { z } from "zod";
 import { projectUrl } from "../config";
+import {
+	buildOpsJson,
+	checkNotationCollisions,
+	checkOpsCollisions,
+	cosenseEditOpSchema,
+	formatCollisionReport,
+} from "../cosense-edit";
 import { sanitizeText, threadErrorMessage } from "../errors";
 import { resolveProject } from "../project-binding";
-import { runCosense, truncate } from "../sandbox";
+import { runCosense, runCosenseWithInputFile, truncate } from "../sandbox";
 
 /**
- * MVP のツールセット。
+ * 書き込みツール (Issue #15, owner gate: APPROVED)。
  *
- * 決定事項: MVP は「Slack で mention → Cosense を読んで回答」まで。書き込みは含めない。
- * previewEdit / submitEdit は意図的に公開していない。ingest 一式を解禁するのは、
- * このモデルの規約遵守度を MVP で測ってからである。
+ * 読み取り系ツールに加えて previewEdit / previewNewPage / submitEdit を公開
+ * する。ワークフローは必ず preview → 検証 → submit の順で、submit 単独で
+ * ページを書き換える経路は作らない。ops JSON と新規ページ本文は
+ * runCosenseWithInputFile() 経由でのみ CLI へ渡す (ページ本文がシェルに
+ * 届く経路を作らない — `printf |` やヒアドキュメントは禁止)。
  */
 
 interface ToolContext {
@@ -99,6 +108,36 @@ async function cosenseText(
 	return truncate(result.stdout, maxChars);
 }
 
+/**
+ * Run a cosense subcommand with free-text input (ops JSON or new-page body).
+ *
+ * The content reaches the container through the writeFile RPC and the CLI
+ * reads it back with --input-file; failures fold into readable text the same
+ * way cosenseText does (sanitized preview of stderr, or the Sandbox系定型文
+ * when the Sandbox itself fails to launch).
+ */
+async function cosensePreviewText(
+	env: Env,
+	project: string,
+	buildArgs: (inputPath: string) => string[],
+	content: string,
+	maxChars?: number,
+): Promise<string> {
+	let result: Awaited<ReturnType<typeof runCosenseWithInputFile>>;
+	try {
+		result = await runCosenseWithInputFile(env, project, buildArgs, content);
+	} catch {
+		return threadErrorMessage("sandbox");
+	}
+	if (!result.ok) {
+		// buildArgs is only invoked here for a stable subcommand label; the
+		// temp path inside is never surfaced to the thread.
+		const label = buildArgs("input-file")[0] ?? "cosense";
+		return formatCosenseFailure([label], result.stderr, result.exitCode);
+	}
+	return truncate(result.stdout, maxChars);
+}
+
 export function createCosenseTools(ctx: ToolContext): ToolSet {
 	const withProject = async (
 		build: (projectUrlValue: string) => string[],
@@ -180,6 +219,111 @@ export function createCosenseTools(ctx: ToolContext): ToolSet {
 					"browseRelatedPages",
 					`${project}/${encodeURIComponent(title)}`,
 				]),
+		}),
+
+		previewEdit: tool({
+			description:
+				"既存ページへの編集を dry-run する。ops (insertBefore / replace / delete) " +
+				"を組み立てて previewId を取得する。ページはまだ変わらない。" +
+				"結果の適用後ページ全体を確認し、問題が無ければ submitEdit で確定する。" +
+				"submitEdit なしに編集が反映されることは無い。新規ページは previewNewPage を使う。" +
+				"ページの作成・編集はユーザーが明示的に指示したときのみ行う。",
+			inputSchema: z.object({
+				pageId: z
+					.string()
+					.min(1)
+					.describe("編集対象ページのID（readPage 出力の top-level id）"),
+				ops: z
+					.array(cosenseEditOpSchema)
+					.min(1)
+					.describe(
+						"編集操作の配列。insertBefore は行IDまたは末尾用の _end を anchor に取り " +
+							"複数行 text も可、replace は行IDに単行 text のみ、delete は行IDのみ。",
+					),
+			}),
+			execute: async ({ pageId, ops }) => {
+				const resolved = await requireProject(ctx);
+				if ("error" in resolved) return resolved.error;
+				let opsJson: string;
+				try {
+					opsJson = buildOpsJson(ops);
+				} catch (error) {
+					return error instanceof Error
+						? `ops が不正です: ${error.message}`
+						: "ops が不正です";
+				}
+				const report = formatCollisionReport(checkOpsCollisions(ops));
+				const preview = await cosensePreviewText(
+					ctx.env,
+					resolved.project,
+					(inputPath) => [
+						"previewEdit",
+						"--input-file",
+						inputPath,
+						projectUrl(ctx.env, resolved.project),
+						pageId,
+					],
+					opsJson,
+					20_000,
+				);
+				return report === "" ? preview : `${report}\n\n---\n\n${preview}`;
+			},
+		}),
+
+		previewNewPage: tool({
+			description:
+				"新規ページ作成を dry-run する (previewEdit --new)。本文の1行目がページタイトル、" +
+				"2行目以降が本文になる。ページはまだ作られない。" +
+				"結果を確認し、問題が無ければ submitEdit で確定する。" +
+				"ページの作成はユーザーが明示的に指示したときのみ行う。",
+			inputSchema: z.object({
+				body: z
+					.string()
+					.min(1)
+					.describe(
+						"新規ページの全文。1行目がタイトル、2行目以降が本文。型は本文1行目に1つだけ書く。",
+					),
+			}),
+			execute: async ({ body }) => {
+				const resolved = await requireProject(ctx);
+				if ("error" in resolved) return resolved.error;
+				const report = formatCollisionReport(checkNotationCollisions(body));
+				const preview = await cosensePreviewText(
+					ctx.env,
+					resolved.project,
+					(inputPath) => [
+						"previewEdit",
+						"--new",
+						"--input-file",
+						inputPath,
+						projectUrl(ctx.env, resolved.project),
+					],
+					body,
+					20_000,
+				);
+				return report === "" ? preview : `${report}\n\n---\n\n${preview}`;
+			},
+		}),
+
+		submitEdit: tool({
+			description:
+				"previewEdit / previewNewPage で取得した previewId を確定してページに反映する。" +
+				"直前の preview の内容を必ず確認してから呼ぶこと。previewId は1回限りで5分で期限切れになる。" +
+				"preview を作り直したら古い previewId は使えない。ページの作成・編集は " +
+				"ユーザーが明示的に指示したときのみ行い、削除の確定には使わない。",
+			inputSchema: z.object({
+				previewId: z
+					.string()
+					.min(1)
+					.describe(
+						"直前の previewEdit / previewNewPage が返した previewId",
+					),
+			}),
+			execute: ({ previewId }) =>
+				withProject(
+					(project) => ["submitEdit", project, previewId],
+					20_000,
+				),
 		}),
 	};
 }
