@@ -17,6 +17,12 @@ import {
 	sanitizeText,
 	threadErrorMessage,
 } from "./errors";
+import {
+	getEnvelopeEvent,
+	handleCosenseNotification,
+	isCosenseNotificationEnvelope,
+	liveNotificationDeps,
+} from "./cosense-notification";
 import { buildSystemPrompt } from "./prompt";
 import { resolveReceiptPost } from "./receipt";
 import { createCosenseTools } from "./tools/cosense";
@@ -143,7 +149,11 @@ export class SlackCosenseBot extends Think {
 }
 
 export default {
-	async fetch(request: Request, env: Env): Promise<Response> {
+	async fetch(
+		request: Request,
+		env: Env,
+		ctx?: { waitUntil: (promise: Promise<unknown>) => void },
+	): Promise<Response> {
 		// Messenger webhooks are root Think routes. Forward them to the single
 		// root agent instance because routeAgentRequest only handles /agents/*.
 		if (new URL(request.url).pathname === "/messengers/slack/webhook") {
@@ -172,6 +182,58 @@ export default {
 			}
 			if (typeof payload.type !== "string") {
 				return new Response("Invalid event", { status: 400 });
+			}
+			// Issue #12: explicit detector/route for Cosense notifications.
+			// Bot-posted channel messages queue in Chat SDK without starting a
+			// Think answer turn (respondTo has no bot-message kind), so the
+			// notifier is handled here at the edge: signature-verified, then
+			// processed in the background while the envelope still forwards
+			// to Think below (queue behavior unchanged). No receipt (#9) or
+			// error-classification (#10) paths are altered by this hunk.
+			if (payload.type === "event_callback") {
+				try {
+					if (isCosenseNotificationEnvelope(payload, env)) {
+						const inner = getEnvelopeEvent(payload);
+						const botId =
+							typeof inner?.bot_id === "string" ? inner.bot_id : "unknown";
+						const channel =
+							typeof inner?.channel === "string" ? inner.channel : "unknown";
+						const ts = typeof inner?.ts === "string" ? inner.ts : "unknown";
+						console.log(
+							`[cosense-notification] detected channel=${channel} ts=${ts} bot_id=${botId}`,
+						);
+						try {
+							await verifySlackRequest(request.clone(), {
+								signingSecret: env.SLACK_SIGNING_SECRET,
+							});
+						} catch {
+							console.error(
+								"[cosense-notification] signature invalid, skipping",
+							);
+							throw new Error("skip-notification");
+						}
+						const task = handleCosenseNotification(
+							inner ?? {},
+							env,
+							liveNotificationDeps(env),
+						).catch((error) => {
+							console.error(
+								`[cosense-notification] background handle failed error=${error instanceof Error ? error.name : "unknown"}`,
+							);
+						});
+						if (ctx) ctx.waitUntil(task);
+						else void task;
+					}
+				} catch (error) {
+					if (error instanceof Error && error.message === "skip-notification") {
+						// Signature failure already logged; still forward to Think so
+						// the adapter applies its own verification.
+					} else {
+						console.error(
+							`[cosense-notification] detector failed error=${error instanceof Error ? error.name : "unknown"}`,
+						);
+					}
+				}
 			}
 			const agent = env.SlackCosenseBot.get(
 				env.SlackCosenseBot.idFromName("default"),
