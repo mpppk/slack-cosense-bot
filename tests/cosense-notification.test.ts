@@ -412,13 +412,88 @@ describe("handleCosenseNotification (reread + one thread per marker)", () => {
 		expect(posted).toHaveLength(0);
 	});
 
-	test("filterUnpostedMarkers matches on marker signature", () => {
-		const instructions = parseMarkerLines(
-			"[query] A [yuki.icon]\n[lint] B [yuki.icon]",
-		);
-		const pending = filterUnpostedMarkers(instructions, [
-			`noise ${markerSignature(instructions[0]!)} noise`,
-		]);
-		expect(pending.map((instruction) => instruction.kind)).toEqual(["lint"]);
-	});
+  test("filterUnpostedMarkers matches on marker signature", () => {
+    const instructions = parseMarkerLines(
+      "[query] A [yuki.icon]\n[lint] B [yuki.icon]",
+    );
+    const pending = filterUnpostedMarkers(instructions, [
+      `noise ${markerSignature(instructions[0]!)} noise`,
+    ]);
+    expect(pending.map((instruction) => instruction.kind)).toEqual(["lint"]);
+  });
+});
+
+describe("prod-miss regression (icon-less marker, exact live attachment shape)", () => {
+  /** Exact shape of the missed prod notification (ts 1789961895.695819). */
+  function missedNotificationEvent() {
+    return {
+      type: "message",
+      subtype: "bot_message",
+      bot_id: LIVE_BOT_ID,
+      username: "Scrapbox",
+      text: "New lines on <https://scrapbox.io/niki-auth/|niki-auth>",
+      channel: "C8P1104Q4",
+      ts: "1789961895.695819",
+      attachments: [
+        {
+          title: ":bookmark:Test query page",
+          title_link:
+            "https://scrapbox.io/niki-auth/Test%20query%20page#6ab0a64dabcd",
+          text: "<https://scrapbox.io/niki-auth/query|query> prod-verify",
+          fallback: "<https://scrapbox.io/niki-auth/query|query> prod-verify",
+          author_name: "yuki",
+        },
+      ],
+    } as unknown as NotificationMessageEvent;
+  }
+
+  test("detector and target extraction match the missed event", () => {
+    expect(
+      isCosenseNotificationMessage(missedNotificationEvent(), baseEnv),
+    ).toBe(true);
+    expect(
+      extractNotificationTargets(missedNotificationEvent(), baseEnv),
+    ).toEqual([
+      {
+        project: "niki-auth",
+        title: "Test query page",
+        pageUrl: "https://scrapbox.io/niki-auth/Test%20query%20page",
+      },
+    ]);
+  });
+
+  test("icon-less marker line parses (trailing icon optional)", () => {
+    expect(parseMarkerLines("[query] prod-verify")).toEqual([
+      { kind: "query", text: "prod-verify", children: [] },
+    ]);
+    // Other users' icons and the legacy icon parse identically.
+    expect(parseMarkerLines("[query] foo [niboshi.icon]")[0]?.text).toBe(
+      "foo",
+    );
+    expect(parseMarkerLines("[query] foo [yuki.icon]")[0]?.text).toBe("foo");
+    // Column-zero requirement still holds: indented markers stay inert.
+    expect(parseMarkerLines(" [query] prod-verify")).toEqual([]);
+  });
+
+  test("handler creates a thread from the missed event via reread", async () => {
+    const posted: string[] = [];
+    const result = await handleCosenseNotification(
+      missedNotificationEvent(),
+      baseEnv,
+      {
+        browsePageText: async () => "[query] prod-verify",
+        listThreadReplyTexts: async () => [],
+        postThreadReply: async (channel, threadTs, text) => {
+          expect(channel).toBe("C8P1104Q4");
+          expect(threadTs).toBe("1789961895.695819");
+          posted.push(text);
+        },
+      },
+    );
+    expect(result.handled).toBe(true);
+    expect(result.pagesWithoutMarkers).toBe(0);
+    expect(result.threadsCreated).toBe(1);
+    expect(posted).toHaveLength(1);
+    expect(posted[0]).toContain("[query] prod-verify");
+  });
 });
