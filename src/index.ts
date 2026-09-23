@@ -78,7 +78,6 @@ export class SlackCosenseBot extends Think {
 	getTools(): ToolSet {
 		return createCosenseTools({
 			env: this.env,
-			model: this.getModel(),
 			// thread.id is the Chat SDK id (slack:C123:1787.123); the Slack channel
 			// the description lives on is thread.channelId.
 			channelId: () => this.getMessengerContext()?.thread.channelId,
