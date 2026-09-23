@@ -20,7 +20,7 @@ RUN apt-get update \
     && bun --version \
     && rm -rf /var/lib/apt/lists/*
 
-COPY --from=docker.io/cloudflare/sandbox:0.12.9 /container-server/sandbox /sandbox
+COPY --from=docker.io/cloudflare/sandbox:0.12.10 /container-server/sandbox /sandbox
 
 # cosense CLI is baked into the image rather than installed at runtime: the
 # container is shared process-wide and long-lived (決定事項: コンテナは全体で1本共有),
