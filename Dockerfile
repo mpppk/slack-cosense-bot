@@ -7,7 +7,7 @@
 #
 # The sandbox binary version MUST match the @cloudflare/sandbox package
 # version in package.json — the SDK checks this on startup and warns on drift.
-FROM node:24-slim
+FROM node:26-slim
 
 ARG BUN_VERSION=1.4.0
 
